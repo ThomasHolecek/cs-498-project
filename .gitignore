@@ -1,0 +1,7 @@
+clips/
+*.task
+models/
+run_logs/
+__pycache__/
+*.log
+data-reextract/
