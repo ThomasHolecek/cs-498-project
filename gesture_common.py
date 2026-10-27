@@ -4,6 +4,8 @@
 # one row per frame, grouped into clips by clip_id. Features are computed here
 # from the raw landmarks, so the feature design can change without re-recording.
 
+import glob
+import json
 import os
 import threading
 
@@ -15,6 +17,7 @@ from record_gestures import CLIPS
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR = os.path.join(HERE, "data")
+CLIPS_DIR = os.path.join(HERE, "clips")
 MODEL_DIR = os.path.join(HERE, "models")
 
 LABELS = list(CLIPS)   # come_here, shoo, stop, none
@@ -30,6 +33,41 @@ ARM_JOINTS = [11, 13, 15, 12, 14, 16]  # shoulders, elbows, wrists: left arm the
 
 HAND_CONNECTIONS = vision.HandLandmarksConnections.HAND_CONNECTIONS
 POSE_LINES = [(11, 12), (11, 13), (13, 15), (12, 14), (14, 16), (11, 23), (12, 24), (23, 24)]
+
+
+# ---------------------------------------------------------------- trims
+# review_clips.py saves, per clip: {"start": frame, "end": frame, "reject": bool,
+# "label": new label (only if relabelled)} in data/trims/<session>.json.
+# The raw CSVs and videos are never modified.
+
+def session_of(clip_id):
+    return clip_id.rsplit("-", 1)[0]
+
+
+def load_trims(data_dir=DATA_DIR):
+    trims = {}
+    for path in sorted(glob.glob(os.path.join(data_dir, "trims", "*.json"))):
+        with open(path) as f:
+            trims.update(json.load(f))
+    return trims
+
+
+def save_trims(session, entries, data_dir=DATA_DIR):
+    os.makedirs(os.path.join(data_dir, "trims"), exist_ok=True)
+    with open(os.path.join(data_dir, "trims", f"{session}.json"), "w") as f:
+        json.dump(entries, f, indent=1, sort_keys=True)
+
+
+def crop_range(t0, t1, clip_end, length_ms):
+    """Range of window start times (ms) such that a window covers as much of the
+    trimmed gesture [t0, t1] as possible while staying inside the clip."""
+    if t1 - t0 >= length_ms:
+        lo, hi = t0, t1 - length_ms
+    else:
+        lo, hi = t1 - length_ms, t0
+    last = max(0.0, clip_end - length_ms)
+    lo, hi = min(max(lo, 0.0), last), min(max(hi, 0.0), last)
+    return lo, max(lo, hi)
 
 
 # ---------------------------------------------------------------- camera

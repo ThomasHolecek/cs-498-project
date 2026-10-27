@@ -14,7 +14,8 @@ from sklearn.metrics import classification_report, confusion_matrix
 from sklearn.model_selection import train_test_split
 from torch import nn
 
-from gesture_common import DATA_DIR, LABELS, MODEL_DIR, POSE_COLS, SEQ_LEN, WINDOW_S, clip_features, window
+from gesture_common import (DATA_DIR, LABELS, MODEL_DIR, POSE_COLS, SEQ_LEN, WINDOW_S, clip_features,
+                            crop_range, load_trims, window)
 from gesture_model import GestureGRU
 
 
@@ -38,14 +39,25 @@ def main():
         raise SystemExit(f"No CSVs in {args.data}/ - record some with record_gestures.py first.")
     df = pd.concat((pd.read_csv(f) for f in files), ignore_index=True)
 
+    # trims from review_clips.py: use only the gesture part, skip rejected clips, apply relabels
+    trims = load_trims(args.data)
     clips = []
-    skipped = 0
+    skipped = rejected = trimmed = 0
     for clip_id, g in df.groupby("clip_id", sort=False):
         g = g.sort_values("frame")
+        tr = trims.get(clip_id, {})
+        if tr.get("reject"):
+            rejected += 1
+            continue
         if g[POSE_COLS[0]].notna().mean() < args.min_detect:
             skipped += 1
             continue
-        clips.append((g, g["label"].iloc[0], g["person"].iloc[0]))
+        t_of = dict(zip(g["frame"], g["t_ms"]))
+        t0 = t_of.get(tr.get("start"), 0.0)
+        t1 = t_of.get(tr.get("end"), g["t_ms"].max())
+        trimmed += t0 > g["t_ms"].min() or t1 < g["t_ms"].max()
+        clips.append((g, tr.get("label", g["label"].iloc[0]), g["person"].iloc[0], t0, t1))
+    print(f"{len(trims)} clips reviewed: {trimmed} trimmed, {rejected} rejected")
     if skipped:
         print(f"skipping {skipped} clips with poor body detection")
     labels = [lb for lb in LABELS if any(c[1] == lb for c in clips)]
@@ -56,19 +68,22 @@ def main():
         val = np.array([c[2] == args.val_person for c in clips])
         if not val.any():
             raise SystemExit(f"no clips from person {args.val_person}")
+    elif len(clips) < 10:
+        raise SystemExit("need at least 10 usable clips to train")
     else:
         _, val_idx = train_test_split(np.arange(len(clips)), test_size=0.2, stratify=y_all, random_state=0)
         val = np.isin(np.arange(len(clips)), val_idx)
 
     X_tr, y_tr, X_va, y_va = [], [], [], []
-    for (g, _, _), y, is_val in zip(clips, y_all, val):
-        spare = max(0.0, g["t_ms"].max() - WINDOW_S * 1000)
-        if is_val:  # the middle 1 s of the clip
-            X_va.append(clip_features(window(g, spare / 2)))
+    for (g, _, _, t0, t1), y, is_val in zip(clips, y_all, val):
+        # 1 s windows placed to cover as much of the (trimmed) gesture as possible
+        lo, hi = crop_range(t0, t1, g["t_ms"].max(), WINDOW_S * 1000)
+        if is_val:
+            X_va.append(clip_features(window(g, (lo + hi) / 2)))
             y_va.append(y)
         else:
             for _ in range(args.crops):
-                X_tr.append(clip_features(window(g, rng.uniform(0, spare))))
+                X_tr.append(clip_features(window(g, rng.uniform(lo, hi))))
                 y_tr.append(y)
     X_tr, X_va = np.stack(X_tr), np.stack(X_va)
     y_tr, y_va = np.array(y_tr), np.array(y_va)

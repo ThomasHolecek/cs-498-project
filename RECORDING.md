@@ -85,6 +85,8 @@ Make every gesture **arm-sized**, because the camera can't see fingers at 3–4 
 3. Fast and small
 4. Slow and big
 
+The screen now tells the performer which hand to use for every clip (the performer's own hand; the preview is mirrored like a mirror). The plan lives in `VARIANTS` in `record_gestures.py` and the hand is saved in the CSV's `hand` column.
+
 **Keep the core of each gesture the same:**
 - come_here always moves *toward* you
 - shoo always moves *away* from you
@@ -127,11 +129,18 @@ The number of clips per gesture is set by `CLIPS` near the top of `record_gestur
 | **r** | Redo the last clip. Press again to go back further. |
 | **n** | Skip this step |
 | **f** | Toggle fullscreen |
+| **b** | Go back one step (while waiting) |
+| **p** | Pause / resume |
+| **m** | Flip the mirrored preview |
+| **s** | Sound on/off (beep at GO, high/low beep when a clip is good/poor) |
 | **q** | Quit. Everything recorded so far is already saved. |
 
 ### Operator checklist
 
 - Watch the bottom line of the screen. **body OK** should show at every distance. **hand --** at 3–4 m is normal.
+- After each clip the red screen shows `last clip: body 98%, hand 70%`. If body is under 80% it says POOR and beeps low: press **r**.
+- A `WARNING:` line means your head or a wrist is cut off by the frame edge. Fix it before pressing SPACE.
+- Wrong webcam? `python record_gestures.py cameras` lists them; use `--source N`. Use `--size 1280x720` to request a higher resolution.
 - Press **r** if a clip went wrong: started late, wrong gesture, or someone walked into frame.
 
 ---
@@ -151,13 +160,34 @@ The number of clips per gesture is set by `CLIPS` near the top of `record_gestur
    python3 record_gestures.py stats
    ```
    This shows the clip counts per person and gesture, and how often a body or hand was detected at each distance. If body detection is low at some distance, fix the lighting or camera height before the next person records.
-2. Commit the data:
+2. Review and trim the clips:
    ```
-   git add data/*.csv
+   python3 review_clips.py --session <run name>
+   ```
+   This plays each clip back with the landmarks drawn on it. Trim each clip to just the gesture, cutting the standing still before and after. Training then only learns from the gesture itself. The originals are never changed: trims are saved to `data/trims/<run name>.json`, so you can redo them any time.
+
+   | Key | Action |
+   |---|---|
+   | **SPACE** | Play / pause (loops over the trimmed part) |
+   | **A / D** or arrows | Step one frame back / forward |
+   | **[** and **]** | Set the gesture's start / end at the current frame |
+   | **T** | Auto-trim to where the arm is moving (check it with SPACE) |
+   | **C** | Clear the trim |
+   | **X** | Reject the clip (wrong gesture, someone walked in, started late) |
+   | **1–4** | Relabel: come_here, shoo, stop, none |
+   | **N / ENTER** | Accept and go to the next clip. **P** goes back. |
+   | **Q** | Save and quit. Next time it starts at the first clip you haven't reviewed. |
+
+   Click or drag on the timeline to scrub. The yellow line shows how fast the arm is moving, so the gesture is usually where it's high. Don't trim `stop` or `none` clips unless something is wrong with them.
+
+   The video only shows on the computer that has the session's `clips/` folder. Without it, the reviewer draws the saved landmarks on a blank background, which is still enough to trim.
+3. Commit the data and the trims:
+   ```
+   git add data/*.csv data/trims/
    git commit -m "Add <name> laptop session"
    git push
    ```
-3. Upload that session's `clips/` folder to the shared drive.
+4. Upload that session's `clips/` folder to the shared drive.
 
 **Test set:** one teammate's data is held out and never used for training, so our accuracy number is measured on someone the model hasn't seen. Decide who before training.
 

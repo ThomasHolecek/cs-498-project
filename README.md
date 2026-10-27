@@ -3,6 +3,7 @@ Gesture Recognition to Action:
 
 Code (see RECORDING.md for the full how-to)
 	record_gestures.py: guided recording sessions that build the gesture dataset in data/
+	review_clips.py: play back recorded clips, trim each to just the gesture, reject or relabel bad ones
 	train_gestures.py: trains the come_here / shoo / stop / none classifier on data/
 	live_gestures.py: runs the classifier live on a webcam or the K1 camera stream, can save video
 	k1_camera_stream.py: runs on the K1, streams its head camera to the laptop over HTTP
