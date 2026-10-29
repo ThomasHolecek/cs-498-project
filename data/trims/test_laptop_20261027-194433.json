@@ -1,0 +1,482 @@
+{
+ "test_laptop_20261027-194433-001": {
+  "end": 23,
+  "reject": false,
+  "start": 8
+ },
+ "test_laptop_20261027-194433-002": {
+  "end": 23,
+  "reject": false,
+  "start": 5
+ },
+ "test_laptop_20261027-194433-003": {
+  "end": 23,
+  "reject": false,
+  "start": 3
+ },
+ "test_laptop_20261027-194433-005": {
+  "end": 22,
+  "reject": false,
+  "start": 5
+ },
+ "test_laptop_20261027-194433-006": {
+  "end": 23,
+  "reject": false,
+  "start": 5
+ },
+ "test_laptop_20261027-194433-007": {
+  "end": 22,
+  "reject": false,
+  "start": 12
+ },
+ "test_laptop_20261027-194433-008": {
+  "end": 23,
+  "reject": false,
+  "start": 2
+ },
+ "test_laptop_20261027-194433-009": {
+  "end": 22,
+  "reject": false,
+  "start": 3
+ },
+ "test_laptop_20261027-194433-013": {
+  "end": 23,
+  "reject": false,
+  "start": 6
+ },
+ "test_laptop_20261027-194433-014": {
+  "end": 23,
+  "reject": false,
+  "start": 7
+ },
+ "test_laptop_20261027-194433-015": {
+  "end": 21,
+  "reject": false,
+  "start": 4
+ },
+ "test_laptop_20261027-194433-016": {
+  "end": 23,
+  "reject": false,
+  "start": 9
+ },
+ "test_laptop_20261027-194433-017": {
+  "end": 22,
+  "reject": false,
+  "start": 0
+ },
+ "test_laptop_20261027-194433-018": {
+  "end": 22,
+  "reject": false,
+  "start": 7
+ },
+ "test_laptop_20261027-194433-019": {
+  "end": 22,
+  "reject": false,
+  "start": 8
+ },
+ "test_laptop_20261027-194433-020": {
+  "end": 22,
+  "reject": false,
+  "start": 5
+ },
+ "test_laptop_20261027-194433-024": {
+  "end": 22,
+  "reject": false,
+  "start": 3
+ },
+ "test_laptop_20261027-194433-025": {
+  "end": 22,
+  "reject": false,
+  "start": 0
+ },
+ "test_laptop_20261027-194433-026": {
+  "end": 23,
+  "reject": false,
+  "start": 1
+ },
+ "test_laptop_20261027-194433-027": {
+  "end": 22,
+  "reject": false,
+  "start": 0
+ },
+ "test_laptop_20261027-194433-028": {
+  "end": 23,
+  "reject": false,
+  "start": 6
+ },
+ "test_laptop_20261027-194433-029": {
+  "end": 23,
+  "reject": false,
+  "start": 8
+ },
+ "test_laptop_20261027-194433-030": {
+  "end": 23,
+  "reject": false,
+  "start": 4
+ },
+ "test_laptop_20261027-194433-031": {
+  "end": 23,
+  "reject": false,
+  "start": 6
+ },
+ "test_laptop_20261027-194433-035": {
+  "end": 23,
+  "reject": false,
+  "start": 7
+ },
+ "test_laptop_20261027-194433-036": {
+  "end": 23,
+  "reject": false,
+  "start": 7
+ },
+ "test_laptop_20261027-194433-037": {
+  "end": 23,
+  "reject": false,
+  "start": 5
+ },
+ "test_laptop_20261027-194433-038": {
+  "end": 23,
+  "reject": false,
+  "start": 2
+ },
+ "test_laptop_20261027-194433-039": {
+  "end": 23,
+  "reject": false,
+  "start": 6
+ },
+ "test_laptop_20261027-194433-040": {
+  "end": 23,
+  "reject": false,
+  "start": 7
+ },
+ "test_laptop_20261027-194433-041": {
+  "end": 23,
+  "reject": false,
+  "start": 4
+ },
+ "test_laptop_20261027-194433-042": {
+  "end": 23,
+  "reject": false,
+  "start": 7
+ },
+ "test_laptop_20261027-194433-047": {
+  "end": 22,
+  "reject": false,
+  "start": 1
+ },
+ "test_laptop_20261027-194433-048": {
+  "end": 22,
+  "reject": false,
+  "start": 6
+ },
+ "test_laptop_20261027-194433-049": {
+  "end": 21,
+  "reject": false,
+  "start": 5
+ },
+ "test_laptop_20261027-194433-050": {
+  "end": 22,
+  "reject": false,
+  "start": 5
+ },
+ "test_laptop_20261027-194433-051": {
+  "end": 23,
+  "reject": false,
+  "start": 9
+ },
+ "test_laptop_20261027-194433-052": {
+  "end": 23,
+  "reject": false,
+  "start": 8
+ },
+ "test_laptop_20261027-194433-053": {
+  "end": 22,
+  "reject": false,
+  "start": 5
+ },
+ "test_laptop_20261027-194433-054": {
+  "end": 13,
+  "reject": false,
+  "start": 3
+ },
+ "test_laptop_20261027-194433-058": {
+  "end": 23,
+  "reject": false,
+  "start": 1
+ },
+ "test_laptop_20261027-194433-059": {
+  "end": 23,
+  "reject": false,
+  "start": 1
+ },
+ "test_laptop_20261027-194433-060": {
+  "end": 22,
+  "reject": false,
+  "start": 4
+ },
+ "test_laptop_20261027-194433-061": {
+  "end": 23,
+  "reject": false,
+  "start": 4
+ },
+ "test_laptop_20261027-194433-062": {
+  "end": 23,
+  "reject": false,
+  "start": 4
+ },
+ "test_laptop_20261027-194433-063": {
+  "end": 23,
+  "reject": false,
+  "start": 6
+ },
+ "test_laptop_20261027-194433-064": {
+  "end": 23,
+  "reject": false,
+  "start": 8
+ },
+ "test_laptop_20261027-194433-065": {
+  "end": 23,
+  "reject": false,
+  "start": 1
+ },
+ "test_laptop_20261027-194433-069": {
+  "end": 23,
+  "reject": false,
+  "start": 2
+ },
+ "test_laptop_20261027-194433-070": {
+  "end": 23,
+  "reject": false,
+  "start": 6
+ },
+ "test_laptop_20261027-194433-072": {
+  "end": 23,
+  "reject": false,
+  "start": 7
+ },
+ "test_laptop_20261027-194433-073": {
+  "end": 23,
+  "reject": false,
+  "start": 7
+ },
+ "test_laptop_20261027-194433-074": {
+  "end": 23,
+  "reject": false,
+  "start": 0
+ },
+ "test_laptop_20261027-194433-075": {
+  "end": 23,
+  "reject": false,
+  "start": 3
+ },
+ "test_laptop_20261027-194433-076": {
+  "end": 23,
+  "reject": false,
+  "start": 3
+ },
+ "test_laptop_20261027-194433-077": {
+  "end": 23,
+  "reject": false,
+  "start": 11
+ },
+ "test_laptop_20261027-194433-081": {
+  "end": 23,
+  "reject": false,
+  "start": 4
+ },
+ "test_laptop_20261027-194433-082": {
+  "end": 23,
+  "reject": false,
+  "start": 3
+ },
+ "test_laptop_20261027-194433-083": {
+  "end": 20,
+  "reject": false,
+  "start": 5
+ },
+ "test_laptop_20261027-194433-085": {
+  "end": 23,
+  "reject": false,
+  "start": 7
+ },
+ "test_laptop_20261027-194433-086": {
+  "end": 23,
+  "reject": false,
+  "start": 5
+ },
+ "test_laptop_20261027-194433-087": {
+  "end": 23,
+  "reject": false,
+  "start": 8
+ },
+ "test_laptop_20261027-194433-088": {
+  "end": 23,
+  "reject": false,
+  "start": 0
+ },
+ "test_laptop_20261027-194433-089": {
+  "end": 23,
+  "reject": false,
+  "start": 8
+ },
+ "test_laptop_20261027-194433-093": {
+  "end": 23,
+  "reject": false,
+  "start": 11
+ },
+ "test_laptop_20261027-194433-094": {
+  "end": 23,
+  "reject": false,
+  "start": 6
+ },
+ "test_laptop_20261027-194433-095": {
+  "end": 22,
+  "reject": false,
+  "start": 0
+ },
+ "test_laptop_20261027-194433-096": {
+  "end": 23,
+  "reject": false,
+  "start": 0
+ },
+ "test_laptop_20261027-194433-097": {
+  "end": 23,
+  "reject": false,
+  "start": 3
+ },
+ "test_laptop_20261027-194433-098": {
+  "end": 23,
+  "reject": false,
+  "start": 11
+ },
+ "test_laptop_20261027-194433-099": {
+  "end": 23,
+  "reject": false,
+  "start": 5
+ },
+ "test_laptop_20261027-194433-100": {
+  "end": 23,
+  "reject": false,
+  "start": 6
+ },
+ "test_laptop_20261027-194433-104": {
+  "end": 23,
+  "reject": false,
+  "start": 7
+ },
+ "test_laptop_20261027-194433-105": {
+  "end": 23,
+  "reject": false,
+  "start": 7
+ },
+ "test_laptop_20261027-194433-106": {
+  "end": 23,
+  "reject": false,
+  "start": 10
+ },
+ "test_laptop_20261027-194433-107": {
+  "end": 23,
+  "reject": false,
+  "start": 7
+ },
+ "test_laptop_20261027-194433-108": {
+  "end": 23,
+  "reject": false,
+  "start": 9
+ },
+ "test_laptop_20261027-194433-109": {
+  "end": 23,
+  "reject": false,
+  "start": 8
+ },
+ "test_laptop_20261027-194433-110": {
+  "end": 23,
+  "reject": false,
+  "start": 8
+ },
+ "test_laptop_20261027-194433-111": {
+  "end": 23,
+  "reject": false,
+  "start": 5
+ },
+ "test_laptop_20261027-194433-115": {
+  "end": 23,
+  "reject": false,
+  "start": 1
+ },
+ "test_laptop_20261027-194433-116": {
+  "end": 23,
+  "reject": false,
+  "start": 5
+ },
+ "test_laptop_20261027-194433-117": {
+  "end": 21,
+  "reject": false,
+  "start": 6
+ },
+ "test_laptop_20261027-194433-118": {
+  "end": 23,
+  "reject": false,
+  "start": 7
+ },
+ "test_laptop_20261027-194433-120": {
+  "end": 23,
+  "reject": false,
+  "start": 5
+ },
+ "test_laptop_20261027-194433-121": {
+  "end": 23,
+  "reject": false,
+  "start": 7
+ },
+ "test_laptop_20261027-194433-122": {
+  "end": 23,
+  "reject": false,
+  "start": 5
+ },
+ "test_laptop_20261027-194433-123": {
+  "end": 23,
+  "reject": false,
+  "start": 2
+ },
+ "test_laptop_20261027-194433-127": {
+  "end": 23,
+  "reject": false,
+  "start": 6
+ },
+ "test_laptop_20261027-194433-128": {
+  "end": 23,
+  "reject": false,
+  "start": 7
+ },
+ "test_laptop_20261027-194433-129": {
+  "end": 22,
+  "reject": false,
+  "start": 5
+ },
+ "test_laptop_20261027-194433-130": {
+  "end": 23,
+  "reject": false,
+  "start": 4
+ },
+ "test_laptop_20261027-194433-131": {
+  "end": 23,
+  "reject": false,
+  "start": 6
+ },
+ "test_laptop_20261027-194433-132": {
+  "end": 23,
+  "reject": false,
+  "start": 4
+ },
+ "test_laptop_20261027-194433-133": {
+  "end": 23,
+  "reject": false,
+  "start": 8
+ },
+ "test_laptop_20261027-194433-134": {
+  "end": 19,
+  "reject": false,
+  "start": 4
+ }
+}
