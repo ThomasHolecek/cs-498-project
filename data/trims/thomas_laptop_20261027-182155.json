@@ -1,0 +1,522 @@
+{
+ "thomas_laptop_20261027-182155-001": {
+  "end": 19,
+  "reject": false,
+  "start": 4
+ },
+ "thomas_laptop_20261027-182155-002": {
+  "end": 19,
+  "reject": false,
+  "start": 4
+ },
+ "thomas_laptop_20261027-182155-003": {
+  "end": 18,
+  "reject": false,
+  "start": 6
+ },
+ "thomas_laptop_20261027-182155-004": {
+  "end": 18,
+  "reject": false,
+  "start": 0
+ },
+ "thomas_laptop_20261027-182155-005": {
+  "end": 19,
+  "reject": true,
+  "start": 0
+ },
+ "thomas_laptop_20261027-182155-006": {
+  "end": 18,
+  "reject": false,
+  "start": 0
+ },
+ "thomas_laptop_20261027-182155-007": {
+  "end": 19,
+  "reject": false,
+  "start": 8
+ },
+ "thomas_laptop_20261027-182155-008": {
+  "end": 18,
+  "reject": false,
+  "start": 0
+ },
+ "thomas_laptop_20261027-182155-009": {
+  "end": 19,
+  "reject": false,
+  "start": 4
+ },
+ "thomas_laptop_20261027-182155-010": {
+  "end": 19,
+  "reject": false,
+  "start": 0
+ },
+ "thomas_laptop_20261027-182155-011": {
+  "end": 18,
+  "reject": false,
+  "start": 0
+ },
+ "thomas_laptop_20261027-182155-012": {
+  "end": 19,
+  "reject": true,
+  "start": 0
+ },
+ "thomas_laptop_20261027-182155-013": {
+  "end": 18,
+  "reject": false,
+  "start": 0
+ },
+ "thomas_laptop_20261027-182155-014": {
+  "end": 18,
+  "reject": false,
+  "start": 5
+ },
+ "thomas_laptop_20261027-182155-015": {
+  "end": 18,
+  "reject": false,
+  "start": 4
+ },
+ "thomas_laptop_20261027-182155-016": {
+  "end": 19,
+  "reject": false,
+  "start": 8
+ },
+ "thomas_laptop_20261027-182155-017": {
+  "end": 18,
+  "reject": false,
+  "start": 4
+ },
+ "thomas_laptop_20261027-182155-018": {
+  "end": 19,
+  "reject": false,
+  "start": 8
+ },
+ "thomas_laptop_20261027-182155-019": {
+  "end": 18,
+  "reject": false,
+  "start": 6
+ },
+ "thomas_laptop_20261027-182155-020": {
+  "end": 19,
+  "reject": false,
+  "start": 7
+ },
+ "thomas_laptop_20261027-182155-021": {
+  "end": 18,
+  "reject": false,
+  "start": 0
+ },
+ "thomas_laptop_20261027-182155-022": {
+  "end": 17,
+  "reject": false,
+  "start": 0
+ },
+ "thomas_laptop_20261027-182155-023": {
+  "end": 18,
+  "reject": false,
+  "start": 7
+ },
+ "thomas_laptop_20261027-182155-024": {
+  "end": 18,
+  "reject": false,
+  "start": 2
+ },
+ "thomas_laptop_20261027-182155-025": {
+  "end": 18,
+  "reject": false,
+  "start": 4
+ },
+ "thomas_laptop_20261027-182155-026": {
+  "end": 18,
+  "reject": false,
+  "start": 4
+ },
+ "thomas_laptop_20261027-182155-027": {
+  "end": 19,
+  "reject": false,
+  "start": 5
+ },
+ "thomas_laptop_20261027-182155-028": {
+  "end": 19,
+  "reject": true,
+  "start": 0
+ },
+ "thomas_laptop_20261027-182155-029": {
+  "end": 19,
+  "reject": true,
+  "start": 0
+ },
+ "thomas_laptop_20261027-182155-032": {
+  "end": 19,
+  "reject": false,
+  "start": 14
+ },
+ "thomas_laptop_20261027-182155-033": {
+  "end": 18,
+  "reject": false,
+  "start": 10
+ },
+ "thomas_laptop_20261027-182155-034": {
+  "end": 21,
+  "reject": true,
+  "start": 10
+ },
+ "thomas_laptop_20261027-182155-035": {
+  "end": 20,
+  "reject": false,
+  "start": 3
+ },
+ "thomas_laptop_20261027-182155-036": {
+  "end": 20,
+  "reject": true,
+  "start": 0
+ },
+ "thomas_laptop_20261027-182155-037": {
+  "end": 20,
+  "reject": true,
+  "start": 0
+ },
+ "thomas_laptop_20261027-182155-038": {
+  "end": 20,
+  "reject": false,
+  "start": 0
+ },
+ "thomas_laptop_20261027-182155-039": {
+  "end": 20,
+  "reject": false,
+  "start": 0
+ },
+ "thomas_laptop_20261027-182155-040": {
+  "end": 19,
+  "reject": true,
+  "start": 0
+ },
+ "thomas_laptop_20261027-182155-041": {
+  "end": 20,
+  "reject": true,
+  "start": 0
+ },
+ "thomas_laptop_20261027-182155-042": {
+  "end": 20,
+  "reject": false,
+  "start": 5
+ },
+ "thomas_laptop_20261027-182155-043": {
+  "end": 20,
+  "reject": true,
+  "start": 5
+ },
+ "thomas_laptop_20261027-182155-044": {
+  "end": 19,
+  "reject": true,
+  "start": 0
+ },
+ "thomas_laptop_20261027-182155-045": {
+  "end": 19,
+  "reject": true,
+  "start": 8
+ },
+ "thomas_laptop_20261027-182155-046": {
+  "end": 19,
+  "reject": false,
+  "start": 9
+ },
+ "thomas_laptop_20261027-182155-047": {
+  "end": 19,
+  "reject": false,
+  "start": 5
+ },
+ "thomas_laptop_20261027-182155-048": {
+  "end": 37,
+  "reject": false,
+  "start": 6
+ },
+ "thomas_laptop_20261027-182155-049": {
+  "end": 30,
+  "reject": false,
+  "start": 0
+ },
+ "thomas_laptop_20261027-182155-050": {
+  "end": 30,
+  "reject": false,
+  "start": 0
+ },
+ "thomas_laptop_20261027-182155-051": {
+  "end": 31,
+  "reject": false,
+  "start": 7
+ },
+ "thomas_laptop_20261027-182155-052": {
+  "end": 25,
+  "reject": false,
+  "start": 3
+ },
+ "thomas_laptop_20261027-182155-053": {
+  "end": 31,
+  "reject": false,
+  "start": 9
+ },
+ "thomas_laptop_20261027-182155-054": {
+  "end": 44,
+  "reject": false,
+  "start": 0
+ },
+ "thomas_laptop_20261027-182155-055": {
+  "end": 31,
+  "reject": false,
+  "start": 9
+ },
+ "thomas_laptop_20261027-182155-056": {
+  "end": 25,
+  "reject": false,
+  "start": 3
+ },
+ "thomas_laptop_20261027-182155-057": {
+  "end": 30,
+  "reject": false,
+  "start": 7
+ },
+ "thomas_laptop_20261027-182155-058": {
+  "end": 48,
+  "reject": false,
+  "start": 10
+ },
+ "thomas_laptop_20261027-182155-059": {
+  "end": 25,
+  "reject": false,
+  "start": 11
+ },
+ "thomas_laptop_20261027-182155-060": {
+  "end": 25,
+  "reject": false,
+  "start": 5
+ },
+ "thomas_laptop_20261027-182155-061": {
+  "end": 41,
+  "reject": false,
+  "start": 0
+ },
+ "thomas_laptop_20261027-182155-062": {
+  "end": 24,
+  "reject": false,
+  "start": 7
+ },
+ "thomas_laptop_20261027-182155-063": {
+  "end": 23,
+  "reject": false,
+  "start": 4
+ },
+ "thomas_laptop_20261027-182155-064": {
+  "end": 33,
+  "reject": false,
+  "start": 4
+ },
+ "thomas_laptop_20261027-182155-065": {
+  "end": 27,
+  "reject": false,
+  "start": 8
+ },
+ "thomas_laptop_20261027-182155-066": {
+  "end": 22,
+  "reject": false,
+  "start": 8
+ },
+ "thomas_laptop_20261027-182155-067": {
+  "end": 45,
+  "reject": false,
+  "start": 7
+ },
+ "thomas_laptop_20261027-182155-068": {
+  "end": 36,
+  "reject": false,
+  "start": 0
+ },
+ "thomas_laptop_20261027-182155-069": {
+  "end": 36,
+  "reject": false,
+  "start": 0
+ },
+ "thomas_laptop_20261027-182155-070": {
+  "end": 19,
+  "reject": false,
+  "start": 0
+ },
+ "thomas_laptop_20261027-182155-071": {
+  "end": 26,
+  "reject": false,
+  "start": 0
+ },
+ "thomas_laptop_20261027-182155-072": {
+  "end": 27,
+  "reject": false,
+  "start": 6
+ },
+ "thomas_laptop_20261027-182155-073": {
+  "end": 29,
+  "reject": false,
+  "start": 7
+ },
+ "thomas_laptop_20261027-182155-074": {
+  "end": 21,
+  "reject": false,
+  "start": 3
+ },
+ "thomas_laptop_20261027-182155-075": {
+  "end": 21,
+  "reject": false,
+  "start": 7
+ },
+ "thomas_laptop_20261027-182155-076": {
+  "end": 25,
+  "reject": false,
+  "start": 12
+ },
+ "thomas_laptop_20261027-182155-077": {
+  "end": 53,
+  "reject": false,
+  "start": 0
+ },
+ "thomas_laptop_20261027-182155-078": {
+  "end": 44,
+  "reject": false,
+  "start": 0
+ },
+ "thomas_laptop_20261027-182155-079": {
+  "end": 40,
+  "reject": false,
+  "start": 0
+ },
+ "thomas_laptop_20261027-182155-080": {
+  "end": 36,
+  "reject": false,
+  "start": 0
+ },
+ "thomas_laptop_20261027-182155-081": {
+  "end": 21,
+  "reject": false,
+  "start": 8
+ },
+ "thomas_laptop_20261027-182155-082": {
+  "end": 28,
+  "reject": false,
+  "start": 9
+ },
+ "thomas_laptop_20261027-182155-083": {
+  "end": 20,
+  "reject": false,
+  "start": 6
+ },
+ "thomas_laptop_20261027-182155-084": {
+  "end": 24,
+  "reject": false,
+  "start": 7
+ },
+ "thomas_laptop_20261027-182155-085": {
+  "end": 19,
+  "reject": false,
+  "start": 7
+ },
+ "thomas_laptop_20261027-182155-086": {
+  "end": 23,
+  "reject": false,
+  "start": 4
+ },
+ "thomas_laptop_20261027-182155-087": {
+  "end": 31,
+  "reject": false,
+  "start": 9
+ },
+ "thomas_laptop_20261027-182155-088": {
+  "end": 32,
+  "reject": false,
+  "start": 16
+ },
+ "thomas_laptop_20261027-182155-089": {
+  "end": 39,
+  "reject": false,
+  "start": 7
+ },
+ "thomas_laptop_20261027-182155-090": {
+  "end": 39,
+  "reject": false,
+  "start": 0
+ },
+ "thomas_laptop_20261027-182155-091": {
+  "end": 35,
+  "reject": false,
+  "start": 0
+ },
+ "thomas_laptop_20261027-182155-092": {
+  "end": 27,
+  "reject": false,
+  "start": 5
+ },
+ "thomas_laptop_20261027-182155-093": {
+  "end": 26,
+  "reject": false,
+  "start": 4
+ },
+ "thomas_laptop_20261027-182155-094": {
+  "end": 28,
+  "reject": false,
+  "start": 16
+ },
+ "thomas_laptop_20261027-182155-095": {
+  "end": 26,
+  "reject": false,
+  "start": 2
+ },
+ "thomas_laptop_20261027-182155-096": {
+  "end": 27,
+  "reject": false,
+  "start": 8
+ },
+ "thomas_laptop_20261027-182155-097": {
+  "end": 30,
+  "reject": false,
+  "start": 2
+ },
+ "thomas_laptop_20261027-182155-098": {
+  "end": 22,
+  "reject": false,
+  "start": 3
+ },
+ "thomas_laptop_20261027-182155-099": {
+  "end": 26,
+  "reject": false,
+  "start": 11
+ },
+ "thomas_laptop_20261027-182155-100": {
+  "end": 43,
+  "reject": false,
+  "start": 10
+ },
+ "thomas_laptop_20261027-182155-101": {
+  "end": 40,
+  "reject": false,
+  "start": 0
+ },
+ "thomas_laptop_20261027-182155-102": {
+  "end": 38,
+  "reject": false,
+  "start": 0
+ },
+ "thomas_laptop_20261027-182155-103": {
+  "end": 29,
+  "reject": false,
+  "start": 2
+ },
+ "thomas_laptop_20261027-182155-104": {
+  "end": 30,
+  "reject": false,
+  "start": 5
+ },
+ "thomas_laptop_20261027-182155-105": {
+  "end": 17,
+  "reject": false,
+  "start": 7
+ },
+ "thomas_laptop_20261027-182155-106": {
+  "end": 27,
+  "reject": false,
+  "start": 12
+ }
+}
