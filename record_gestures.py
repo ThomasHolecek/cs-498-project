@@ -97,30 +97,72 @@ WIN = "gesture recorder"
 
 
 class Detector:
-    """Runs MediaPipe pose (33 body points) and hands (21 points each + built-in gesture) on a frame."""
+    """Runs MediaPipe pose (33 body points) and hands (21 points each + built-in gesture) on a frame.
+
+    MediaPipe's video mode sometimes crashes after a few minutes, especially on macOS
+    ("Packet isn't the sole owner of the holder"). When that happens, the crashed model is
+    rebuilt and that one frame counts as nothing detected, so the session keeps going.
+    """
+
+    MAX_FAILURES = 3   # crashes in a row before giving up (then it's not the occasional MediaPipe bug)
 
     def __init__(self):
         for model in (HAND_MODEL, POSE_MODEL):
             if not Path(model).exists():
                 sys.exit(f"Missing {model}. Download it into this folder:\n  {MODEL_URLS[model]}")
+        self.pose = self._make("pose")
+        self.hands = self._make("hands")
+        self.failures = 0
+        self.ts = 0
+
+    @staticmethod
+    def _make(which):
         vision = mp.tasks.vision
-        self.pose = vision.PoseLandmarker.create_from_options(vision.PoseLandmarkerOptions(
-            base_options=mp.tasks.BaseOptions(model_asset_path=POSE_MODEL),
-            running_mode=vision.RunningMode.VIDEO,
-            num_poses=1,
-        ))
-        self.hands = vision.GestureRecognizer.create_from_options(vision.GestureRecognizerOptions(
+        if which == "pose":
+            return vision.PoseLandmarker.create_from_options(vision.PoseLandmarkerOptions(
+                base_options=mp.tasks.BaseOptions(model_asset_path=POSE_MODEL),
+                running_mode=vision.RunningMode.VIDEO,
+                num_poses=1,
+            ))
+        return vision.GestureRecognizer.create_from_options(vision.GestureRecognizerOptions(
             base_options=mp.tasks.BaseOptions(model_asset_path=HAND_MODEL),
             running_mode=vision.RunningMode.VIDEO,
             num_hands=2,
         ))
-        self.ts = 0
+
+    def _rebuild(self, which, err):
+        self.failures += 1
+        if self.failures > self.MAX_FAILURES:
+            raise err
+        print(f"MediaPipe {which} model crashed (known MediaPipe bug). Restarted it; recording continues.")
+        try:
+            getattr(self, which).close()   # may raise the same error; the old model is discarded either way
+        except Exception:
+            pass
+        setattr(self, which, self._make(which))
 
     def __call__(self, frame_bgr):
         self.ts = max(self.ts + 1, int(time.monotonic() * 1000))  # VIDEO mode needs increasing timestamps
         rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
         image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb)
-        return self.pose.detect_for_video(image, self.ts), self.hands.recognize_for_video(image, self.ts)
+        vision = mp.tasks.vision
+        ok = True
+        try:
+            pose = self.pose.detect_for_video(image, self.ts)
+        except RuntimeError as err:
+            ok = False
+            self._rebuild("pose", err)
+            pose = vision.PoseLandmarkerResult(pose_landmarks=[], pose_world_landmarks=[])
+        try:
+            hands = self.hands.recognize_for_video(image, self.ts)
+        except RuntimeError as err:
+            ok = False
+            self._rebuild("hands", err)
+            hands = vision.GestureRecognizerResult(gestures=[], handedness=[], hand_landmarks=[],
+                                                   hand_world_landmarks=[])
+        if ok:
+            self.failures = 0
+        return pose, hands
 
 
 def assign_hands(pose, hands, w, h):
