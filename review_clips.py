@@ -29,14 +29,23 @@ import cv2
 import numpy as np
 import pandas as pd
 
+from record_gestures import fit_window
 from gesture_common import (CLIPS_DIR, DATA_DIR, HAND_CONNECTIONS, LABELS, POSE_LINES,
                             load_trims, save_trims, session_of)
 
 WIN = "review clips"
-VIEW_W = 960
-PANEL_H = 140
-MARGIN = 20
-TL_TOP, TL_BOTTOM = 62, 104   # timeline position inside the panel
+# The window is drawn at a fixed size (scaled by the OS) so text stays sharp:
+# header bar, video, then a panel with the info line, timeline and key help.
+VIEW_W = 1280
+HEADER_H = 84
+VIDEO_H = 520
+MARGIN = 30
+TL_TOP = HEADER_H + VIDEO_H + 80          # timeline box, in window coordinates
+TL_BOTTOM = TL_TOP + 70
+TOTAL_H = TL_BOTTOM + 128
+FONT = cv2.FONT_HERSHEY_SIMPLEX
+KEY_HELP = [("SPACE", "play/pause"), ("A / D", "step frame"), ("[ ]", "set start / end"), ("T", "auto-trim"),
+            ("C", "clear trim"), ("X", "reject clip"), ("1-4", "relabel"), ("N / P", "next / prev"), ("Q", "save+quit")]
 LEFT_KEYS = {2424832, 65361, 63234}   # arrow codes on Windows / Linux / macOS
 RIGHT_KEYS = {2555904, 65363, 63235}
 LABEL_COLORS = {"come_here": (0, 200, 0), "shoo": (0, 140, 255), "stop": (60, 60, 255), "none": (200, 200, 200)}
@@ -114,7 +123,7 @@ def draw_row(img, row):
                 cv2.line(img, hand[c.start], hand[c.end], (0, 255, 0), 1)
 
 
-def text(img, s, org, scale=0.55, color=(255, 255, 255), thickness=1):
+def text(img, s, org, scale=0.8, color=(255, 255, 255), thickness=2):
     # dark box behind the text (an outline drawn as thicker text misaligns in OpenCV 5)
     (w, h), base = cv2.getTextSize(s, cv2.FONT_HERSHEY_SIMPLEX, scale, thickness)
     x, y = org
@@ -131,7 +140,6 @@ class Reviewer:
             self.i = unreviewed[0] if unreviewed else 0
         self.playing, self.last_step = False, 0.0
         self.message, self.message_until = "", 0.0
-        self.view_h = 0
         self.dragging = False
         self.load()
 
@@ -163,7 +171,11 @@ class Reviewer:
 
     def go(self, k):
         if not 0 <= k < len(self.clips):
-            self.say("that was the last clip" if k >= len(self.clips) else "this is the first clip")
+            if k >= len(self.clips):
+                self.commit()   # accepting the last clip still counts as reviewing it
+                self.say("saved - that was the last clip (Q to quit)")
+            else:
+                self.say("this is the first clip")
             return
         self.commit()
         self.clip.unload()
@@ -230,8 +242,7 @@ class Reviewer:
         return int(round(min(max(frac, 0.0), 1.0) * (c.n - 1)))
 
     def on_mouse(self, event, x, y, flags, param):
-        top = self.view_h + TL_TOP - 8
-        bottom = self.view_h + TL_BOTTOM + 8
+        top, bottom = TL_TOP - 14, TL_BOTTOM + 14
         if event == cv2.EVENT_LBUTTONDOWN and top <= y <= bottom:
             self.dragging, self.playing = True, False
             self.pos = self.frame_at_x(x)
@@ -258,46 +269,74 @@ class Reviewer:
             img = np.full((int(row["img_h"]), int(row["img_w"]), 3), 40, np.uint8)
             text(img, "video not on this computer - showing saved landmarks", (20, 40))
         draw_row(img, row)
-        img = cv2.resize(img, (VIEW_W, int(img.shape[0] * VIEW_W / img.shape[1])))
-        self.view_h = img.shape[0]
-        if e.get("reject"):
-            cv2.rectangle(img, (0, 0), (VIEW_W - 1, self.view_h - 1), (0, 0, 255), 10)
-            text(img, "REJECTED", (VIEW_W // 2 - 110, self.view_h // 2), 1.6, (0, 0, 255), 4)
-        inside = e["start"] <= self.pos <= e["end"]
-        text(img, "IN GESTURE" if inside else "outside trim", (VIEW_W - 190, 30), 0.7,
-             (0, 255, 0) if inside else (150, 150, 150), 2)
+        scale = min(VIEW_W / img.shape[1], VIDEO_H / img.shape[0])
+        img = cv2.resize(img, (int(img.shape[1] * scale), int(img.shape[0] * scale)))
+        vh, vw = img.shape[:2]
 
-        panel = np.full((PANEL_H, VIEW_W, 3), 25, np.uint8)
+        canvas = np.full((TOTAL_H, VIEW_W, 3), 25, np.uint8)
+        vx, vy = (VIEW_W - vw) // 2, HEADER_H + (VIDEO_H - vh) // 2
+        canvas[HEADER_H:HEADER_H + VIDEO_H] = 0
+        canvas[vy:vy + vh, vx:vx + vw] = img
+        rejected = e.get("reject", False)
+        inside = e["start"] <= self.pos <= e["end"]
+        if rejected:
+            cv2.rectangle(canvas, (vx, vy), (vx + vw - 1, vy + vh - 1), (0, 0, 255), 10)
+            text(canvas, "REJECTED", (VIEW_W // 2 - 190, HEADER_H + VIDEO_H // 2), 2.4, (0, 0, 255), 6)
+        elif inside:
+            cv2.rectangle(canvas, (vx, vy), (vx + vw - 1, vy + vh - 1), (0, 200, 0), 6)
+        badge, badge_color = ("IN GESTURE", (0, 220, 0)) if inside else ("outside trim", (160, 160, 160))
+        text(canvas, badge, (vx + vw - 250, vy + 40), 1.0, badge_color, 3)
+
+        # header: where we are, what the clip is
         reviewed = sum(cl.id in self.trims for cl in self.clips)
         label = self.label
-        relabel = f" (was {c.label})" if label != c.label else ""
         r0 = c.rows.iloc[0]
-        text(panel, f"{self.i + 1}/{len(self.clips)}  {c.id}", (MARGIN, 22))
-        text(panel, f"{label}{relabel}", (MARGIN + 430, 22), 0.6, LABEL_COLORS.get(label, (255, 255, 255)), 2)
-        text(panel, f"{r0['distance_m']} m {r0['facing']}   reviewed {reviewed}/{len(self.clips)}"
-                    + ("   [saved]" if c.id in self.trims else ""), (MARGIN + 600, 22), 0.5)
+        header_color = LABEL_COLORS.get(label, (200, 200, 200))
+        canvas[:HEADER_H] = (45, 45, 45)
+        cv2.rectangle(canvas, (0, 0), (14, HEADER_H), header_color, -1)
+        text(canvas, f"Clip {self.i + 1} of {len(self.clips)}", (MARGIN, 52), 1.2)
+        name = label.replace("_", " ").upper() + (f"  (was {c.label})" if label != c.label else "")
+        text(canvas, name, (340, 52), 1.2, header_color, 3)
+        hand = r0.get("hand")
+        hand = f"{hand} hand   " if isinstance(hand, str) and hand else ""
+        text(canvas, f"{hand}{r0['distance_m']:g} m   {str(r0['facing']).replace('_', ' ')}", (760, 36), 0.7, (220, 220, 220), 2)
+        status = "SAVED" if c.id in self.trims else "not reviewed yet"
+        text(canvas, f"{status}   |   {reviewed}/{len(self.clips)} done", (760, 70), 0.7,
+             (120, 255, 120) if c.id in self.trims else (170, 170, 170), 2)
+
+        # info line
         dur = (c.t[e["end"]] - c.t[e["start"]]) / 1000
-        text(panel, f"gesture: frames {e['start']}-{e['end']}  ({dur:.2f} s of {c.t[-1] / 1000:.2f} s)"
-                    f"    frame {self.pos}  ({c.t[self.pos] / 1000:.2f} s)", (MARGIN, 46))
+        text(canvas, f"Gesture keeps {dur:.2f} s of {c.t[-1] / 1000:.2f} s    (frames {e['start']} to {e['end']})",
+             (MARGIN, HEADER_H + VIDEO_H + 34), 0.8)
+        text(canvas, f"now: frame {self.pos}  ({c.t[self.pos] / 1000:.2f} s)", (VIEW_W - 360, HEADER_H + VIDEO_H + 34), 0.8,
+             (255, 255, 255))
 
         # timeline: trimmed part highlighted, wrist-motion curve, playhead
         x = lambda f: int(MARGIN + f / max(c.n - 1, 1) * (VIEW_W - 2 * MARGIN))
-        cv2.rectangle(panel, (MARGIN, TL_TOP), (VIEW_W - MARGIN, TL_BOTTOM), (60, 60, 60), -1)
-        cv2.rectangle(panel, (x(e["start"]), TL_TOP), (x(e["end"]), TL_BOTTOM),
-                      (40, 40, 160) if e.get("reject") else (40, 110, 40), -1)
+        cv2.rectangle(canvas, (MARGIN, TL_TOP), (VIEW_W - MARGIN, TL_BOTTOM), (70, 70, 70), -1)
+        cv2.rectangle(canvas, (x(e["start"]), TL_TOP), (x(e["end"]), TL_BOTTOM),
+                      (50, 50, 170) if rejected else (50, 120, 50), -1)
         m = c.motion / max(c.motion.max(), 1e-6)
-        pts = np.array([(x(f), int(TL_BOTTOM - 3 - v * (TL_BOTTOM - TL_TOP - 6))) for f, v in enumerate(m)], np.int32)
-        cv2.polylines(panel, [pts], False, (0, 220, 255), 1, cv2.LINE_AA)
-        for f in (e["start"], e["end"]):
-            cv2.line(panel, (x(f), TL_TOP - 4), (x(f), TL_BOTTOM + 4), (0, 255, 0), 2)
-        cv2.line(panel, (x(self.pos), TL_TOP - 6), (x(self.pos), TL_BOTTOM + 6), (255, 255, 255), 2)
+        pts = np.array([(x(f), int(TL_BOTTOM - 4 - v * (TL_BOTTOM - TL_TOP - 8))) for f, v in enumerate(m)], np.int32)
+        cv2.polylines(canvas, [pts], False, (0, 220, 255), 2, cv2.LINE_AA)
+        for f, tag in ((e["start"], "START"), (e["end"], "END")):
+            cv2.line(canvas, (x(f), TL_TOP - 8), (x(f), TL_BOTTOM + 8), (0, 255, 0), 3)
+            cv2.putText(canvas, tag, (x(f) - (50 if tag == "END" else 0), TL_TOP - 14), FONT, 0.55, (0, 255, 0), 1, cv2.LINE_AA)
+        cv2.line(canvas, (x(self.pos), TL_TOP - 10), (x(self.pos), TL_BOTTOM + 10), (255, 255, 255), 3)
+        cv2.putText(canvas, "yellow line = how fast your arm moves", (MARGIN, TL_BOTTOM + 28), FONT, 0.55,
+                    (0, 220, 255), 1, cv2.LINE_AA)
 
+        # keys as a grid of chips, or a status message for a moment after an action
         if time.monotonic() < self.message_until:
-            text(panel, self.message, (MARGIN, 128), 0.55, (0, 255, 255))
+            text(canvas, self.message, (MARGIN, TL_BOTTOM + 78), 0.9, (0, 255, 255), 2)
         else:
-            text(panel, "SPACE play  A/D step  [ ] start/end  T auto  C clear  X reject  "
-                        "1-4 label  N next  P prev  Q quit", (MARGIN, 128), 0.45, (180, 180, 180))
-        return np.vstack([img, panel])
+            col_w = (VIEW_W - 2 * MARGIN) // 5
+            for k, (key, what) in enumerate(KEY_HELP):
+                cx, cy = MARGIN + (k % 5) * col_w, TL_BOTTOM + 62 + (k // 5) * 36
+                cv2.putText(canvas, key, (cx, cy), FONT, 0.7, (0, 220, 255), 2, cv2.LINE_AA)
+                kw = cv2.getTextSize(key, FONT, 0.7, 2)[0][0]
+                cv2.putText(canvas, what, (cx + kw + 10, cy), FONT, 0.7, (200, 200, 200), 1, cv2.LINE_AA)
+        return canvas
 
 
 def main():
@@ -314,7 +353,7 @@ def main():
         files = [f for f in files if os.path.basename(f) == f"{args.session}.csv"]
     if not files:
         raise SystemExit(f"No session CSVs found in {args.data}/")
-    df = pd.concat((pd.read_csv(f) for f in files), ignore_index=True)
+    df = pd.concat((pd.read_csv(f, low_memory=False) for f in files), ignore_index=True)
     if args.person:
         df = df[df["person"] == args.person]
     if args.label:
@@ -325,6 +364,7 @@ def main():
 
     reviewer = Reviewer(clips, load_trims(args.data), args.data, start_all=args.all)
     cv2.namedWindow(WIN, cv2.WINDOW_NORMAL)
+    fit_window(WIN, VIEW_W, TOTAL_H)
     cv2.setMouseCallback(WIN, reviewer.on_mouse)
     while True:
         reviewer.tick()

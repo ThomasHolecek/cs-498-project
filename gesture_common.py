@@ -21,7 +21,7 @@ CLIPS_DIR = os.path.join(HERE, "clips")
 MODEL_DIR = os.path.join(HERE, "models")
 
 LABELS = list(CLIPS)   # come_here, shoo, stop, none
-WINDOW_S = 1.0         # the classifier looks at the last 1 s; clips are 1.5 s so training takes random crops
+WINDOW_S = 1.0         # the classifier looks at the last 1 s; clips are longer so training takes random crops
 SEQ_LEN = 24           # each window is resampled to this many time steps
 
 N_HAND = 21
