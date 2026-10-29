@@ -4,13 +4,15 @@ head_track.py  -  Booster K1 head tracking pipeline
 Loop:  frame  ->  MediaPipe Pose (all people)  ->  pick the locked person
        ->  YOUR controller turns pixel error into head yaw/pitch  ->  send to head
 
-Everything in this file is plumbing EXCEPT the HeadTracker class near the bottom.
-That class has two methods with TODOs in them. Those are yours.
 
-Run against a laptop webcam, printing head commands (tonight):
+Run against a laptop webcam, printing head commands:
     python head_track.py --source webcam --head print
 
-Run against the robot camera topic, driving the real head (tomorrow):
+Run against the robot camera, driving the real head (tomorrow, from a Mac):
+    on robot:   python3 k1_camera_stream.py --topic <color topic>
+    on laptop:  python head_track.py --source url --url http://<robot-ip>:8080/stream.mjpg --head booster --iface en0
+
+Linux laptop with ROS2 can also subscribe directly:
     python head_track.py --source ros2 --topic /the/color/image/topic --head booster --iface eth0
 
 Keys while the window is focused:
@@ -92,6 +94,26 @@ class WebcamSource:
         self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
         if not self.cap.isOpened():
             raise RuntimeError(f"Could not open webcam index {index}")
+
+    def read(self):
+        return self.cap.read()
+
+    def release(self):
+        self.cap.release()
+
+
+class UrlSource:
+    """
+    Reads an MJPEG stream over HTTP, e.g. the one served by k1_camera_stream.py
+    running on the robot:   http://<robot-ip>:8080/stream.mjpg
+    No ROS2 needed on the laptop. This is the path to use from a Mac.
+    """
+    def __init__(self, url):
+        self.url = url
+        self.cap = cv2.VideoCapture(url)
+        if not self.cap.isOpened():
+            raise RuntimeError(f"Could not open stream {url}  (is k1_camera_stream.py running on the robot?)")
+        print(f"[url] reading {url}")
 
     def read(self):
         return self.cap.read()
@@ -259,11 +281,36 @@ def clamp_head(pitch_rad, yaw_rad):
     pitch_rad = _clamp(pitch_rad, math.radians(PITCH_MIN_DEG), math.radians(PITCH_MAX_DEG))
     return pitch_rad, yaw_rad
 
+class _Throttle:
+    """
+    Shared by the sinks: only pass a command through if it actually changed
+    (by more than ~0.05 deg) and no more often than max_hz. Keeps the terminal
+    readable and avoids spamming the robot with identical RPCs.
+    """
+    def __init__(self, max_hz=20.0):
+        self._min_dt = 1.0 / max_hz
+        self._last_t = 0.0
+        self._last = (None, None)
 
+    def should_send(self, pitch_rad, yaw_rad):
+        now = time.monotonic()
+        if now - self._last_t < self._min_dt:
+            return False
+        lp, ly = self._last
+        if lp is not None and abs(pitch_rad - lp) < 1e-3 and abs(yaw_rad - ly) < 1e-3:
+            return False
+        self._last_t = now
+        self._last = (pitch_rad, yaw_rad)
+        return True
+    
 class PrintHead:
+    def __init__(self):
+        self._throttle = _Throttle()
+
     def send(self, pitch_rad, yaw_rad):
         pitch_rad, yaw_rad = clamp_head(pitch_rad, yaw_rad)
-        print(f"head  pitch={math.degrees(pitch_rad):+6.1f} deg   yaw={math.degrees(yaw_rad):+6.1f} deg")
+        if self._throttle.should_send(pitch_rad, yaw_rad):
+            print(f"head  pitch={math.degrees(pitch_rad):+6.1f} deg   yaw={math.degrees(yaw_rad):+6.1f} deg")
 
 
 class BoosterHead:
@@ -277,10 +324,13 @@ class BoosterHead:
         ChannelFactory.Instance().Init(0, network_interface)
         self._client = B1LocoClient()
         self._client.Init()
+        self._throttle = _Throttle()
         print(f"[booster] connected on {network_interface}")
 
     def send(self, pitch_rad, yaw_rad):
         pitch_rad, yaw_rad = clamp_head(pitch_rad, yaw_rad)
+        if not self._throttle.should_send(pitch_rad, yaw_rad):
+            return
         if HEAD_UNITS == "degrees":
             pitch_rad, yaw_rad = math.degrees(pitch_rad), math.degrees(yaw_rad)
         rc = self._client.RotateHead(pitch_rad, yaw_rad)
@@ -310,11 +360,11 @@ class HeadTracker:
         # The last Person we believed was our target. None means no lock.
         self.last_target = None
 
-        # Tuning knobs. Start small. You will adjust these at the robot.
-        self.kp_yaw = 0.0        # TODO pick a starting value
-        self.kp_pitch = 0.0      # TODO pick a starting value
-        self.dead_zone = 0.0     # TODO fraction of the frame to ignore (e.g. 0.05)
-        self.max_step = 0.0      # TODO max radians the head may move per frame
+        self.kp_yaw = 0.08        #  starting value of yaw
+        self.kp_pitch = 0.06      # starting value of pitch
+        self.dead_zone = 0.05     # fraction of the frame to ignore 
+        self.max_step = 0.03      #  max radians the head may move per frame
+        self.max_jump = 0.2       # max distance the target can move in one frame
 
     # ---------------------------------------------------------------- lock
     def lock_on(self, person):
@@ -329,22 +379,29 @@ class HeadTracker:
         return self.last_target is not None
 
     # ---------------------------------------------------------------- target
+    
     def choose_target(self, people):
+        def distance(self, person):
+                last_x , last_y = self.last_target.box_center
+                person_x, person_y = person.box_center
+                return math.hypot(last_x - person_x, last_y - person_y)
         """
         people: list[Person] detected this frame (may be empty).
         Returns the Person that is our locked target this frame, or None.
 
-        TODO (yours):
-          - If we are not locked, return None.
-          - Otherwise find which Person in `people` is the same human as
-            self.last_target. Hint: compare box centers, pick the nearest.
-          - If the nearest one is too far away to plausibly be the same person
-            (they can only move so far in one frame), treat the target as lost
-            for this frame and return None but keep self.last_target so we can
-            re-acquire when they reappear.
-          - If you do find them, update self.last_target to the new Person.
         """
-        raise NotImplementedError("choose_target: write me")
+        if self.last_target is None: #if there is no target
+            return None
+        if not people: #if there are no people in the frame
+            return None
+        nearest_person = min(people, key=self.distance) #find person in the people the robot sees who is closest to the last frame's target
+
+        if self.distance(nearest_person) > self.max_jump: #if the nearest person is to far away from the last frame
+            return None
+        self.last_target = nearest_person #update the last target to the new person
+        
+        return nearest_person #return the new target
+        
 
     # ---------------------------------------------------------------- control
     def update(self, target):
@@ -352,19 +409,32 @@ class HeadTracker:
         target: the Person to center on, or None.
         Returns (pitch_rad, yaw_rad) for the head this frame.
 
-        TODO (yours):
-          - If target is None, hold the current pose (return self.pitch, self.yaw).
-          - Compute the error between the target point (target.cx, target.cy) and
-            the frame center (0.5, 0.5). Normalize so error is in [-1, 1].
-          - Apply a dead zone: if |error| is small, treat it as zero.
-          - Proportional step: delta = kp * error. Limit |delta| to max_step.
-          - Add the step to self.yaw / self.pitch (watch the signs: YAW_SIGN, PITCH_SIGN).
-          - Clamp to the joint limits (clamp_head does this for you).
-          - Return the new (self.pitch, self.yaw).
+        TODO 
         Optional once it works: smooth target.cx/cy with a moving average before
         computing error, so a jittery detection does not shake the head.
         """
-        raise NotImplementedError("update: write me")
+        if target is None:
+            return self.pitch, self.yaw
+
+        error_x = (target.cx - 0.5) * 2 #0.5 center of our frame
+        error_y = (target.cy - 0.5) * 2
+
+        if abs(error_x) < self.dead_zone: #robots head does not have to perfectly be centered on the target, ignores small errors making head movement more smooth
+            error_x = 0.0
+        if abs(error_y) < self.dead_zone:
+            error_y = 0.0
+
+        step_yaw = self.kp_yaw * error_x #how much the head is off from the center multiplied by the proportional gain to get the step size, the greater the error the larger the step size
+        step_pitch = self.kp_pitch * error_y 
+
+        step_yaw = _clamp(step_yaw, -self.max_step, self.max_step) # if the step size is too large (if the person was barely in frame) it wont overshoot and jerk the head around, it will just move the max step size
+        step_pitch = _clamp(step_pitch, -self.max_step, self.max_step)
+
+        self.yaw += step_yaw * YAW_SIGN # which way is up and down for the robot
+        self.pitch += step_pitch * PITCH_SIGN
+
+        self.pitch, self.yaw = clamp_head(self.pitch, self.yaw) # makes sure pitch and yaw are never outside of the robots limits
+        return self.pitch, self.yaw
 
     def center(self):
         self.pitch, self.yaw = 0.0, 0.0
@@ -401,16 +471,23 @@ def draw_overlay(frame, people, target, tracker, fps):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--source", choices=["webcam", "ros2"], default="webcam")
+    ap.add_argument("--source", choices=["webcam", "url", "ros2"], default="webcam")
     ap.add_argument("--cam", type=int, default=0, help="webcam index")
-    ap.add_argument("--topic", default="/camera/color/image_raw", help="ROS2 image topic")
+    ap.add_argument("--url", default="http://192.168.10.102:8080/stream.mjpg",
+                    help="MJPEG stream URL from k1_camera_stream.py on the robot")
+    ap.add_argument("--topic", default="/camera/color/image_raw", help="ROS2 image topic (Linux + ROS2 only)")
     ap.add_argument("--head", choices=["print", "booster"], default="print")
     ap.add_argument("--iface", default="eth0", help="network interface the robot is on")
     ap.add_argument("--model", default=DEFAULT_MODEL)
     ap.add_argument("--no-window", action="store_true")
     args = ap.parse_args()
 
-    source = WebcamSource(args.cam) if args.source == "webcam" else Ros2ImageSource(args.topic)
+    if args.source == "webcam":
+        source = WebcamSource(args.cam)
+    elif args.source == "url":
+        source = UrlSource(args.url)
+    else:
+        source = Ros2ImageSource(args.topic)
     head = PrintHead() if args.head == "print" else BoosterHead(args.iface)
     detector = PoseDetector(args.model)
     tracker = HeadTracker()
