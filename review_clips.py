@@ -3,6 +3,7 @@
 #   python review_clips.py                                  # starts at the first unreviewed clip
 #   python review_clips.py --person joe --label come_here   # only some clips
 #   python review_clips.py --all                            # start from the first clip
+#   python review_clips.py --view --skeleton --label shoo   # just watch the gestures as skeletons, saves nothing
 #
 # Trims are saved to data/trims/<session>.json; the CSVs and videos are never
 # changed, so a trim can always be redone. train_gestures.py uses only the
@@ -15,6 +16,7 @@
 #   T       auto-trim to where the arm is moving
 #   C       clear the trim (use the whole clip)
 #   X       reject / un-reject the clip (bad take, wrong gesture...)
+#   V       switch between the video and a skeleton-only view (drawn from the saved landmarks)
 #   1-4     relabel: 1 come_here  2 shoo  3 stop  4 none
 #   N / ENTER  accept and go to the next clip      P  previous clip
 #   Q / ESC    save and quit
@@ -44,7 +46,7 @@ TL_TOP = HEADER_H + VIDEO_H + 80          # timeline box, in window coordinates
 TL_BOTTOM = TL_TOP + 70
 TOTAL_H = TL_BOTTOM + 128
 FONT = cv2.FONT_HERSHEY_SIMPLEX
-KEY_HELP = [("SPACE", "play/pause"), ("A / D", "step frame"), ("[ ]", "set start / end"), ("T", "auto-trim"),
+KEY_HELP = [("SPACE", "play/pause"), ("A / D", "step frame"), ("[ ]", "set start / end"), ("T", "auto-trim"), ("V", "video / skeleton"),
             ("C", "clear trim"), ("X", "reject clip"), ("1-4", "relabel"), ("N / P", "next / prev"), ("Q", "save+quit")]
 LEFT_KEYS = {2424832, 65361, 63234}   # arrow codes on Windows / Linux / macOS
 RIGHT_KEYS = {2555904, 65363, 63235}
@@ -102,8 +104,9 @@ class Clip:
         return max(0, int(moving[0]) - 3), min(self.n - 1, int(moving[-1]) + 3)
 
 
-def draw_row(img, row):
-    """Draw the landmarks saved in a CSV row (so clips can be reviewed even without the video)."""
+def draw_row(img, row, bold=False):
+    """Draw the landmarks saved in a CSV row (so clips can be reviewed even without the video).
+    bold: thicker lines and joint dots, for the skeleton-only view."""
     h, w = img.shape[:2]
 
     def pt(prefix, i):
@@ -115,12 +118,22 @@ def draw_row(img, row):
     pose = [pt("pose", i) for i in range(33)]
     for a, b in POSE_LINES:
         if pose[a] and pose[b]:
-            cv2.line(img, pose[a], pose[b], (255, 128, 0), 2)
+            cv2.line(img, pose[a], pose[b], (255, 128, 0), 6 if bold else 2, cv2.LINE_AA)
+    if bold:
+        for i in (11, 12, 13, 14, 15, 16, 23, 24):
+            if pose[i]:
+                cv2.circle(img, pose[i], 8, (255, 200, 120), -1, cv2.LINE_AA)
+        if pose[0]:   # head
+            cv2.circle(img, pose[0], 26, (255, 200, 120), 4, cv2.LINE_AA)
     for side in "lr":
         hand = [pt(f"{side}hand", i) for i in range(21)]
         for c in HAND_CONNECTIONS:
             if hand[c.start] and hand[c.end]:
-                cv2.line(img, hand[c.start], hand[c.end], (0, 255, 0), 1)
+                cv2.line(img, hand[c.start], hand[c.end], (0, 255, 0), 3 if bold else 1, cv2.LINE_AA)
+        if bold:
+            for p in hand:
+                if p:
+                    cv2.circle(img, p, 4, (0, 0, 255), -1, cv2.LINE_AA)
 
 
 def text(img, s, org, scale=0.8, color=(255, 255, 255), thickness=2):
@@ -132,8 +145,9 @@ def text(img, s, org, scale=0.8, color=(255, 255, 255), thickness=2):
 
 
 class Reviewer:
-    def __init__(self, clips, trims, data_dir, start_all=False):
+    def __init__(self, clips, trims, data_dir, start_all=False, skeleton=False, view_only=False):
         self.clips, self.trims, self.data_dir = clips, trims, data_dir
+        self.skeleton, self.view_only = skeleton, view_only   # view_only: nothing is ever saved
         self.i = 0
         if not start_all:
             unreviewed = [k for k, c in enumerate(clips) if c.id not in trims]
@@ -159,6 +173,8 @@ class Reviewer:
 
     def commit(self):
         """Save the current clip's trim (this also marks it as reviewed)."""
+        if self.view_only:
+            return
         c = self.clip
         self.trims[c.id] = dict(self.entry)
         save_trims(c.session, {k: v for k, v in self.trims.items() if session_of(k) == c.session},
@@ -216,6 +232,9 @@ class Reviewer:
                 self.say("auto-trimmed to the arm motion - check it with SPACE")
             else:
                 self.say("no clear motion found - trim by hand")
+        elif ch == "v":
+            self.skeleton = not self.skeleton
+            self.say("skeleton only" if self.skeleton else "video")
         elif ch == "c":
             e["start"], e["end"] = 0, c.n - 1
         elif ch == "x":
@@ -263,12 +282,14 @@ class Reviewer:
         c, e = self.clip, self.entry
         frames = c.frames()
         row = c.rows.iloc[self.pos].to_dict()
-        if frames:
+        skeleton = self.skeleton or not frames
+        if not skeleton:
             img = frames[min(self.pos, len(frames) - 1)].copy()
         else:
             img = np.full((int(row["img_h"]), int(row["img_w"]), 3), 40, np.uint8)
-            text(img, "video not on this computer - showing saved landmarks", (20, 40))
-        draw_row(img, row)
+            if not frames:
+                text(img, "video not on this computer - showing saved landmarks", (20, 40))
+        draw_row(img, row, bold=skeleton)
         scale = min(VIEW_W / img.shape[1], VIDEO_H / img.shape[0])
         img = cv2.resize(img, (int(img.shape[1] * scale), int(img.shape[0] * scale)))
         vh, vw = img.shape[:2]
@@ -300,8 +321,8 @@ class Reviewer:
         hand = r0.get("hand")
         hand = f"{hand} hand   " if isinstance(hand, str) and hand else ""
         text(canvas, f"{hand}{r0['distance_m']:g} m   {str(r0['facing']).replace('_', ' ')}", (760, 36), 0.7, (220, 220, 220), 2)
-        status = "SAVED" if c.id in self.trims else "not reviewed yet"
-        text(canvas, f"{status}   |   {reviewed}/{len(self.clips)} done", (760, 70), 0.7,
+        status = "VIEW ONLY" if self.view_only else "SAVED" if c.id in self.trims else "not reviewed yet"
+        text(canvas, status if self.view_only else f"{status}   |   {reviewed}/{len(self.clips)} done", (760, 70), 0.7,
              (120, 255, 120) if c.id in self.trims else (170, 170, 170), 2)
 
         # info line
@@ -345,6 +366,8 @@ def main():
     ap.add_argument("--person")
     ap.add_argument("--label", choices=LABELS)
     ap.add_argument("--session", help="only clips from this session (CSV name without .csv)")
+    ap.add_argument("--skeleton", action="store_true", help="start in skeleton-only view (V toggles it)")
+    ap.add_argument("--view", action="store_true", help="view only: never save trims or mark clips reviewed")
     ap.add_argument("--all", action="store_true", help="start from the first clip, not the first unreviewed")
     args = ap.parse_args()
 
@@ -362,7 +385,8 @@ def main():
     if not clips:
         raise SystemExit("No clips match those filters.")
 
-    reviewer = Reviewer(clips, load_trims(args.data), args.data, start_all=args.all)
+    reviewer = Reviewer(clips, load_trims(args.data), args.data, start_all=args.all or args.view,
+                        skeleton=args.skeleton, view_only=args.view)
     cv2.namedWindow(WIN, cv2.WINDOW_NORMAL)
     fit_window(WIN, VIEW_W, TOTAL_H)
     cv2.setMouseCallback(WIN, reviewer.on_mouse)

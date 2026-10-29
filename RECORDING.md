@@ -188,6 +188,8 @@ The number of clips per gesture is set by `CLIPS` near the top of `record_gestur
    | **N / ENTER** | Accept and go to the next clip. **P** goes back. |
    | **Q** | Save and quit. Next time it starts at the first clip you haven't reviewed. |
 
+   **V** switches between the video and a skeleton-only view drawn from the saved landmarks. To just watch gestures without the person, and without saving anything, run `python review_clips.py --view --skeleton --label shoo` (add `--person joe` or `--session <run name>` to narrow it).
+
    Click or drag on the timeline to scrub. The yellow line shows how fast the arm is moving, so the gesture is usually where it's high. Don't trim `stop` or `none` clips unless something is wrong with them.
 
    The video only shows on the computer that has the session's `clips/` folder. Without it, the reviewer draws the saved landmarks on a blank background, which is still enough to trim.
