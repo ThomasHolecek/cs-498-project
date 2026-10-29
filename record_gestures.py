@@ -8,7 +8,7 @@ records each clip, and saves:
     clips/<person>_<camera>_<time>/*.mp4        the raw clips, so you can re-extract later
 
 Setup:
-    pip install mediapipe opencv-python pandas
+    pip install mediapipe opencv-python pandas imageio-ffmpeg
     Put both models in the folder you run from:
     https://storage.googleapis.com/mediapipe-models/gesture_recognizer/gesture_recognizer/float16/latest/gesture_recognizer.task
     https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_full/float16/latest/pose_landmarker_full.task
@@ -30,12 +30,17 @@ Every finished clip is saved immediately, so quitting never loses work.
 
 import argparse
 import csv
+import io
+import json
 import math
 import re
 import shutil
+import subprocess
+import tempfile
 import sys
 import threading
 import time
+import wave
 try:
     import winsound
 except ImportError:   # not Windows
@@ -74,7 +79,8 @@ VARIANTS = {
 }
 FACING_TEXT = {"front": "facing the camera", "turned_left": "body turned LEFT (~45 deg)",
                "turned_right": "body turned RIGHT (~45 deg)"}
-CLIP_SECONDS = 1.5      # a bit longer than the classifier's 1 s window, so training can take random 1 s crops
+CLIP_SECONDS = 3.0      # recording time per clip; longer than the classifier's 1 s window, so training takes random 1 s crops
+STYLE_SECONDS = {"slow and big": 4.5, "hold still": 3.5}   # styles that need more time than CLIP_SECONDS
 FIRST_COUNTDOWN = 7.0   # time to walk to your mark after pressing SPACE
 COUNTDOWN = 5.0         # rest + get ready between clips
 
@@ -167,12 +173,67 @@ def make_row(meta, frame_idx, t_ms, w, h, pose, hands):
     return row
 
 
-def beep(freq, ms):
-    """Audible cue so the performer doesn't need to read the screen from 4 m."""
-    if winsound:
-        threading.Thread(target=winsound.Beep, args=(freq, ms), daemon=True).start()
-    else:
-        print("", end="", flush=True)
+SOUND_LEAD = 0.12   # seconds before GO that the GO sound starts, to cancel playback latency (--sound-lead)
+
+
+def tone(freq, ms, volume=0.6):
+    """A sine beep as in-memory WAV bytes. Playing a ready-made WAV starts much faster than winsound.Beep."""
+    rate = 22050
+    n = int(rate * ms / 1000)
+    fade = min(n // 4, 200)   # short fade in/out so it doesn't click
+    wave_data = b"".join(
+        int(32767 * volume * math.sin(2 * math.pi * freq * i / rate) * min(1, i / fade, (n - i) / fade)).to_bytes(2, "little", signed=True)
+        for i in range(n))
+    buf = io.BytesIO()
+    with wave.open(buf, "wb") as w:
+        w.setnchannels(1)
+        w.setsampwidth(2)
+        w.setframerate(rate)
+        w.writeframes(wave_data)
+    return buf.getvalue()
+
+
+class Sounds:
+    """Audible cues so the performer doesn't need to read the screen from 4 m.
+
+    Cues are scheduled against the clock on timer threads, not played from the video loop, so a slow
+    frame (MediaPipe) can't make them late. Windows only; other systems get silence.
+    """
+
+    def __init__(self, lead):
+        self.lead = lead
+        self.enabled = winsound is not None
+        # Windows can't play from memory asynchronously, so write the tones to files once and play those
+        self.dir = Path(tempfile.mkdtemp(prefix="gesture_sounds_"))
+        self.files = {}
+        for name, data in {"tick": tone(700, 70), "go": tone(1400, 350), "good": tone(500, 150), "poor": tone(300, 500)}.items():
+            self.files[name] = str(self.dir / f"{name}.wav")
+            (self.dir / f"{name}.wav").write_bytes(data)
+        self.timers = []
+
+    def play(self, name):
+        if self.enabled:
+            winsound.PlaySound(self.files[name], winsound.SND_FILENAME | winsound.SND_ASYNC)
+
+    def countdown(self, go_at):
+        """Schedule ticks at 3, 2, 1 and the GO sound for the monotonic time go_at."""
+        self.cancel()
+        now = time.monotonic()
+        for name, when in [("tick", go_at - 3), ("tick", go_at - 2), ("tick", go_at - 1), ("go", go_at - self.lead)]:
+            if when > now:
+                timer = threading.Timer(when - now, self.play, args=(name,))
+                timer.daemon = True
+                timer.start()
+                self.timers.append(timer)
+
+    def cancel(self):
+        for timer in self.timers:
+            timer.cancel()
+        self.timers = []
+
+    def close(self):
+        self.cancel()
+        shutil.rmtree(self.dir, ignore_errors=True)
 
 
 def clip_quality(rows):
@@ -196,6 +257,24 @@ def framing_warning(pose, w, h):
     return ""
 
 
+def to_h264(path):
+    """Re-encode a clip as H.264 in place: OpenCV can only write MPEG-4 Part 2, which most players
+    (browsers, VS Code video extensions) can't play. Needs `pip install imageio-ffmpeg`; returns success."""
+    try:
+        import imageio_ffmpeg
+        ffmpeg = imageio_ffmpeg.get_ffmpeg_exe()
+    except ImportError:
+        return False
+    tmp = Path(path).with_suffix(".tmp.mp4")
+    done = subprocess.run([ffmpeg, "-y", "-loglevel", "error", "-i", str(path), "-c:v", "libx264", "-crf", "18",
+                           "-pix_fmt", "yuv420p", "-movflags", "+faststart", str(tmp)])
+    if done.returncode != 0:
+        tmp.unlink(missing_ok=True)
+        return False
+    tmp.replace(path)
+    return True
+
+
 def write_video(path, frames, fps):
     h, w = frames[0].shape[:2]
     # Whole-number fps: the MP4 writer can refuse fractional rates like 23.7
@@ -206,23 +285,81 @@ def write_video(path, frames, fps):
     for frame in frames:
         out.write(frame)
     out.release()
+    to_h264(path)
+
+
+def full_plan():
+    """Every step of a fresh session: (step number, distance, facing, label, [(hand, style) per clip])."""
+    plan = []
+    for d in DISTANCES:
+        for f in FACINGS:
+            for label in CLIPS:
+                variants = [VARIANTS[label][i % len(VARIANTS[label])] for i in range(CLIPS[label])]
+                plan.append((len(plan) + 1, d, f, label, variants))
+    return plan
+
+
+def session_clips(name):
+    """[(clip_id, label, distance, facing, hand)] for each clip saved in a session's CSV, in order."""
+    path = DATA_DIR / f"{name}.csv"
+    if not path.exists():
+        sys.exit(f"No session {name!r}: {path} doesn't exist. Use a name from the data/ folder.")
+    clips = {}
+    with open(path, newline="") as f:
+        for row in csv.DictReader(f):
+            clips.setdefault(row["clip_id"], (row["clip_id"], row["label"], float(row["distance_m"]),
+                                              row["facing"], row.get("hand") or ""))
+    return list(clips.values())
+
+
+def resume_plan(name):
+    """The steps still to record for an old session: missing clips, plus replacements for rejected ones.
+
+    A clip counts toward its step unless it was rejected in review_clips.py (data/trims/<name>.json).
+    Which hand/style is still missing is worked out from the hands the good clips already used.
+    """
+    trims_path = DATA_DIR / "trims" / f"{name}.json"
+    trims = json.loads(trims_path.read_text()) if trims_path.exists() else {}
+    good = {}
+    for clip_id, label, distance, facing, hand in session_clips(name):
+        if not trims.get(clip_id, {}).get("reject", False):
+            good.setdefault((distance, facing, label), []).append(hand)
+    plan = []
+    for stepno, d, f, label, variants in full_plan():
+        missing = list(variants)
+        for hand in good.get((float(d), f, label), []):
+            if missing:
+                missing.remove(next((v for v in missing if v[0] == hand), missing[0]))
+        if missing:
+            plan.append((stepno, d, f, label, missing))
+    return plan
 
 
 class Session:
     """One CSV + one folder of clips per recording session. Can undo the last clip."""
 
-    def __init__(self, name):
+    def __init__(self, name, append=False):
         self.name = name
+        self.append = append   # continuing an old session: add to its files, never delete them
         self.clip_dir = CLIPS_DIR / name
         self.clip_dir.mkdir(parents=True, exist_ok=True)
         DATA_DIR.mkdir(exist_ok=True)
         self.csv_path = DATA_DIR / f"{name}.csv"
-        self.file = open(self.csv_path, "w", newline="")
-        self.writer = csv.DictWriter(self.file, COLUMNS, restval="")
-        self.writer.writeheader()
-        self.file.flush()
         self.history = []   # (CSV position before the clip, video path, what to rewind to on undo)
         self.n = 0          # clip numbers are never reused, even after an undo
+        if append:
+            for clip_id, *_ in session_clips(name):
+                self.n = max(self.n, int(clip_id.rsplit("-", 1)[1]))
+            for video in self.clip_dir.glob("*.mp4"):
+                self.n = max(self.n, int(video.stem.split("-")[0]))
+            self.file = open(self.csv_path, "r+", newline="")
+            self.file.seek(0, 2)
+            self.writer = csv.DictWriter(self.file, COLUMNS, restval="")
+        else:
+            self.file = open(self.csv_path, "w", newline="")
+            self.writer = csv.DictWriter(self.file, COLUMNS, restval="")
+            self.writer.writeheader()
+            self.file.flush()
 
     def save_clip(self, rows, frames, seconds, label, distance, facing, rewind_to):
         self.n += 1
@@ -249,7 +386,7 @@ class Session:
 
     def close(self):
         self.file.close()
-        if not self.history:   # nothing recorded: don't leave empty files behind
+        if not self.history and not self.append:   # nothing recorded: don't leave empty files behind
             self.csv_path.unlink(missing_ok=True)
             shutil.rmtree(self.clip_dir, ignore_errors=True)
 
@@ -264,14 +401,14 @@ def webcam_frames(source, size=None):
     if size and is_webcam:
         cap.set(cv2.CAP_PROP_FRAME_WIDTH, size[0])
         cap.set(cv2.CAP_PROP_FRAME_HEIGHT, size[1])
-    misses = 0
+    misses, started = 0, False
     try:
         while True:
             ok, frame = cap.read()
             if ok:
-                misses = 0
+                misses, started = 0, True
                 yield frame
-            elif is_webcam and misses < 100:   # webcams (especially on macOS) skip frames while starting up
+            elif is_webcam and misses < (150 if started else 500):   # webcams can take several seconds to start up
                 misses += 1
                 time.sleep(0.02)
             else:
@@ -329,19 +466,77 @@ def put_text(img, text, org, scale, thickness=2):
     cv2.putText(img, text, org, cv2.FONT_HERSHEY_SIMPLEX, scale, (255, 255, 255), thickness, cv2.LINE_AA)
 
 
-CANVAS_W, BANNER_H, FOOTER_H, VIDEO_H = 1280, 170, 70, 480   # the preview is drawn at this fixed size so text stays sharp
+CANVAS_W, BANNER_H, FOOTER_H, VIDEO_H = 1280, 150, 64, 480   # drawn at this fixed size so text stays sharp
+BG_IDLE, BG_GET_READY, BG_RECORDING = (80, 55, 35), (0, 120, 220), (0, 0, 190)   # banner colors (BGR)
+GREEN, RED, GREY = (90, 220, 90), (60, 60, 255), (120, 120, 120)
 
 
-def draw(frame, pose, hands, mirror, banner, big, color, status, progress, notice=None):
-    """banner: 3 text lines on a colored bar above the video. notice: (text, bgr color) over the video bottom."""
+def screen_size():
+    """(width, height) of the main screen in pixels, or None if it can't be found."""
+    try:
+        import ctypes
+        user32 = ctypes.windll.user32
+        return user32.GetSystemMetrics(0), user32.GetSystemMetrics(1)
+    except (AttributeError, OSError):
+        pass
+    try:
+        import tkinter
+        root = tkinter.Tk()
+        size = root.winfo_screenwidth(), root.winfo_screenheight()
+        root.destroy()
+        return size
+    except Exception:
+        return None
+
+
+def fit_window(win, width, height):
+    """Open the window at its drawn size, or smaller so it fits comfortably on this screen."""
+    screen = screen_size()
+    scale = min(1.0, 0.92 * screen[0] / width, 0.82 * screen[1] / height) if screen else 1.0
+    cv2.resizeWindow(win, int(width * scale), int(height * scale))
+
+
+STYLES = list(dict.fromkeys(style for variants in VARIANTS.values() for _, style in variants))
+LENGTH_BTN = (20, BANNER_H + 16, 260, 46)            # x, y, w, h of the "Clip lengths" button
+PANEL_X, PANEL_Y, PANEL_W, ROW_H = 20, BANNER_H + 70, 600, 52
+
+
+def panel_rects(row):
+    """(minus button, plus button) rectangles for a row of the clip-length panel."""
+    y = PANEL_Y + row * ROW_H + 6
+    return (PANEL_X + 400, y, 46, 40), (PANEL_X + 530, y, 46, 40)
+
+
+def inside(rect, x, y):
+    return rect[0] <= x <= rect[0] + rect[2] and rect[1] <= y <= rect[1] + rect[3]
+
+
+def button(canvas, rect, text, fill=(70, 70, 70)):
+    x, y, w, h = rect
+    cv2.rectangle(canvas, (x, y), (x + w, y + h), fill, -1)
+    cv2.rectangle(canvas, (x, y), (x + w, y + h), (200, 200, 200), 2)
+    size = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, 0.8, 2)[0]
+    cv2.putText(canvas, text, (x + (w - size[0]) // 2, y + (h + size[1]) // 2), cv2.FONT_HERSHEY_SIMPLEX, 0.8,
+                (255, 255, 255), 2, cv2.LINE_AA)
+
+
+def dot(canvas, x, y, ok, label):
+    cv2.circle(canvas, (x, y), 9, GREEN if ok else RED, -1)
+    cv2.putText(canvas, label, (x + 20, y + 6), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (230, 230, 230), 1, cv2.LINE_AA)
+
+
+def draw(frame, pose, hands, mirror, banner, big, color, det, info, progress, notice=None, recording=False, show_help=False,
+         lengths=None, panel_open=False):
+    """banner: 3 text lines on a colored bar above the video. det: (body, left, right) found flags.
+    notice: (text, color) shown over the bottom of the video. recording: red frame + REC badge."""
     h, w = frame.shape[:2]
     scale = min(CANVAS_W / w, VIDEO_H / h)
     vw, vh = int(w * scale), int(h * scale)
     view = cv2.resize(frame, (vw, vh), interpolation=cv2.INTER_AREA if scale < 1 else cv2.INTER_LINEAR)
-    for points, dot in [(pose.pose_landmarks, (0, 255, 255)), (hands.hand_landmarks, (255, 0, 255))]:
+    for points, tint in [(pose.pose_landmarks, (0, 255, 255)), (hands.hand_landmarks, (255, 0, 255))]:
         for person in points:
             for p in person:
-                cv2.circle(view, (int(p.x * vw), int(p.y * vh)), 4, dot, -1)
+                cv2.circle(view, (int(p.x * vw), int(p.y * vh)), 4, tint, -1)
     if mirror:
         view = cv2.flip(view, 1)   # display only; recorded frames are never mirrored
     canvas = np.zeros((BANNER_H + VIDEO_H + FOOTER_H, CANVAS_W, 3), np.uint8)
@@ -349,48 +544,109 @@ def draw(frame, pose, hands, mirror, banner, big, color, status, progress, notic
     canvas[y0:y0 + vh, x0:x0 + vw] = view
 
     canvas[:BANNER_H] = color
-    sizes = [(1.9, 4), (1.2, 3), (0.95, 2)]
-    ys = [62, 112, 152]
-    for text, (sc, th), y in zip(banner, sizes, ys):
+    for text, (sc, th), y in zip(banner, [(1.7, 4), (1.05, 2), (0.85, 2)], [60, 105, 138]):
         put_text(canvas, text, (30, y), sc, th)
+    if recording:   # blinking badge, so it's obvious the camera is saving
+        on = int(time.monotonic() * 3) % 2 == 0
+        cv2.circle(canvas, (CANVAS_W - 290, 52), 22, (255, 255, 255) if on else (140, 140, 255), -1)
+        put_text(canvas, "REC", (CANVAS_W - 250, 66), 1.4, 3)
+    else:
+        cv2.circle(canvas, (CANVAS_W - 290, 52), 22, (200, 200, 200), 3)
+        put_text(canvas, "not recording", (CANVAS_W - 250, 60), 0.8, 2)
+
     if big:
-        size = cv2.getTextSize(big, cv2.FONT_HERSHEY_SIMPLEX, 7, 14)[0]
-        put_text(canvas, big, ((CANVAS_W - size[0]) // 2, BANNER_H + (VIDEO_H + size[1]) // 2), 7, 14)
+        size = cv2.getTextSize(big, cv2.FONT_HERSHEY_SIMPLEX, 6, 12)[0]
+        cx, cy = CANVAS_W // 2, BANNER_H + VIDEO_H // 2
+        shade = canvas.copy()
+        cv2.circle(shade, (cx, cy), 120, (0, 0, 0), -1)   # dark disc so the number reads on any background
+        canvas = cv2.addWeighted(shade, 0.55, canvas, 0.45, 0)
+        put_text(canvas, big, (cx - size[0] // 2, cy + size[1] // 2), 6, 12)
     if notice:
         text, tint = notice
-        cv2.rectangle(canvas, (0, BANNER_H + VIDEO_H - 50), (CANVAS_W, BANNER_H + VIDEO_H), (0, 0, 0), -1)
-        cv2.putText(canvas, text, (20, BANNER_H + VIDEO_H - 15), cv2.FONT_HERSHEY_SIMPLEX, 0.85, tint, 2, cv2.LINE_AA)
+        cv2.rectangle(canvas, (0, BANNER_H + VIDEO_H - 52), (CANVAS_W, BANNER_H + VIDEO_H), (0, 0, 0), -1)
+        cv2.putText(canvas, text, (24, BANNER_H + VIDEO_H - 16), cv2.FONT_HERSHEY_SIMPLEX, 0.85, tint, 2, cv2.LINE_AA)
 
     foot = BANNER_H + VIDEO_H
-    canvas[foot:] = (30, 30, 30)
-    cv2.rectangle(canvas, (0, foot), (int(CANVAS_W * progress), foot + 8), (0, 200, 0), -1)   # progress through the plan
-    cv2.putText(canvas, status, (20, foot + 36), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 1, cv2.LINE_AA)
-    cv2.putText(canvas, KEYS_HELP, (20, foot + 62), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (170, 170, 170), 1, cv2.LINE_AA)
+    canvas[foot:] = (32, 32, 32)
+    cv2.rectangle(canvas, (0, foot), (int(CANVAS_W * progress), foot + 6), GREEN, -1)   # progress through the plan
+    for k, (ok, label) in enumerate(zip(det, ("body", "left hand", "right hand"))):
+        dot(canvas, 34 + k * 190, foot + 36, ok, label)
+    cv2.putText(canvas, info, (600, foot + 42), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (200, 200, 200), 1, cv2.LINE_AA)
+    cv2.putText(canvas, "SPACE start   H help", (CANVAS_W - 260, foot + 42),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.6, (160, 160, 160), 1, cv2.LINE_AA)
+    if lengths is not None:   # click the button to open a panel for changing how long each kind of clip records
+        button(canvas, LENGTH_BTN, "Clip lengths " + ("^" if panel_open else "v"))
+        if panel_open:
+            shade = canvas.copy()
+            cv2.rectangle(shade, (PANEL_X, PANEL_Y), (PANEL_X + PANEL_W, PANEL_Y + ROW_H * len(STYLES) + 12), (20, 20, 20), -1)
+            canvas = cv2.addWeighted(shade, 0.9, canvas, 0.1, 0)
+            for k, style in enumerate(STYLES):
+                y = PANEL_Y + k * ROW_H
+                cv2.putText(canvas, style, (PANEL_X + 20, y + 38), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (230, 230, 230), 2, cv2.LINE_AA)
+                minus, plus = panel_rects(k)
+                button(canvas, minus, "-")
+                button(canvas, plus, "+")
+                cv2.putText(canvas, f"{lengths[style]:g} s", (PANEL_X + 458, y + 38), cv2.FONT_HERSHEY_SIMPLEX, 0.8,
+                            (0, 220, 255), 2, cv2.LINE_AA)
+    if show_help:
+        shade = canvas.copy()
+        cv2.rectangle(shade, (0, BANNER_H), (CANVAS_W, foot), (0, 0, 0), -1)
+        canvas = cv2.addWeighted(shade, 0.8, canvas, 0.2, 0)
+        for k, (key, what) in enumerate(KEYS_HELP):
+            y = BANNER_H + 55 + k * 40
+            cv2.putText(canvas, key, (330, y), cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 220, 255), 2, cv2.LINE_AA)
+            cv2.putText(canvas, what, (560, y), cv2.FONT_HERSHEY_SIMPLEX, 0.9, (230, 230, 230), 2, cv2.LINE_AA)
+    if recording:
+        cv2.rectangle(canvas, (0, 0), (CANVAS_W - 1, canvas.shape[0] - 1), (0, 0, 255), 14)
     cv2.imshow(WIN, canvas)
 
 
-KEYS_HELP = "SPACE start | r redo | n skip | b back | p pause | m mirror | s sound | f fullscreen | q quit"
+KEYS_HELP = [("SPACE", "start the step"), ("- / +", "shorter / longer clips (or click Clip lengths)"), ("R", "redo the last clip"), ("N", "skip this step"), ("B", "back one step"),
+             ("P", "pause"), ("M", "flip the mirrored preview"), ("S", "sound on / off"), ("F", "fullscreen"),
+             ("H", "show / hide this help"), ("Q", "quit (everything is saved)")]
 
 
 # ---- Commands ----
 
 def record(args):
     detect = Detector()
-    steps = [(d, f, label) for d in DISTANCES for f in FACINGS for label in CLIPS]
-    if not 1 <= args.start <= len(steps):
-        sys.exit(f"--start must be between 1 and {len(steps)}")
-    session = Session(f"{args.person}_{args.camera}_{time.strftime('%Y%m%d-%H%M%S')}")
+    total = len(full_plan())
+    if args.resume:
+        name = Path(args.resume).stem   # accepts the run name, data/<name>.csv or clips/<name>
+        person, camera = name.split("_")[:2]
+        steps = resume_plan(name)
+        if not steps:
+            sys.exit(f"Nothing left to record in {name}: every step has all its good (not rejected) clips.")
+        redo = sum(len(v) for *_, v in steps)
+        print(f"Continuing {name}: {redo} clips to record in {len(steps)} steps.")
+        session, start = Session(name, append=True), 0
+    else:
+        if not (args.person and args.camera):
+            sys.exit("Give --person and --camera, or --resume <session> to continue an old session.")
+        person, camera = args.person, args.camera
+        steps = full_plan()
+        if not 1 <= args.start <= total:
+            sys.exit(f"--start must be between 1 and {total}")
+        session, start = Session(f"{person}_{camera}_{time.strftime('%Y%m%d-%H%M%S')}"), args.start - 1
     size = tuple(int(v) for v in args.size.lower().split("x")) if args.size else None
     source = ros_frames(args.ros_topic) if args.ros_topic else webcam_frames(args.source, size)
     mirror = args.ros_topic is None   # mirror the preview for a webcam you're facing
+    lengths = {style: STYLE_SECONDS.get(style, CLIP_SECONDS) for style in STYLES}   # seconds per style, editable while recording
+    panel_open, clicks = False, []
+
+    def secs_for(style):
+        return lengths.get(style, CLIP_SECONDS)
+
+    sounds, scheduled, show_help = Sounds(args.sound_lead), False, False
     sound, paused, note = True, False, ""   # note: result of the last clip, shown until the next one starts
 
-    step, clip_no = args.start - 1, 0
+    step, clip_no = start, 0
     state, until = "idle", 0.0        # idle -> countdown -> recording -> countdown ... -> idle
     rows, frames, t0 = [], [], 0.0
     fps, last = 0.0, time.monotonic()
     cv2.namedWindow(WIN, cv2.WINDOW_NORMAL)
-    cv2.resizeWindow(WIN, CANVAS_W, BANNER_H + VIDEO_H + FOOTER_H)
+    fit_window(WIN, CANVAS_W, BANNER_H + VIDEO_H + FOOTER_H)
+    cv2.setMouseCallback(WIN, lambda event, x, y, flags, param: clicks.append((x, y)) if event == cv2.EVENT_LBUTTONDOWN else None)
 
     for frame in source:
         if paused:   # keep reading the camera so it doesn't buffer, but do nothing else
@@ -404,72 +660,99 @@ def record(args):
         last = now
         pose, hands = detect(frame)
         h, w = frame.shape[:2]
-        distance, facing, label = steps[step]
+        stepno, distance, facing, label, variants = steps[step]
 
+        if state == "countdown" and not scheduled:
+            scheduled = True
+            if sound:
+                sounds.countdown(until)
+        elif state != "countdown":
+            scheduled = False
         if state == "countdown" and now >= until:
             state, t0, rows, frames = "recording", now, [], []
-            if sound:
-                beep(1200, 250)
         if state == "recording":
-            meta = dict(label=label, person=args.person, camera=args.camera, distance_m=distance, facing=facing,
-                        hand=VARIANTS[label][clip_no % len(VARIANTS[label])][0])
+            meta = dict(label=label, person=person, camera=camera, distance_m=distance, facing=facing,
+                        hand=variants[clip_no][0])
             rows.append(make_row(meta, len(rows), round((now - t0) * 1000), w, h, pose, hands))
             frames.append(frame)
-            if now - t0 >= CLIP_SECONDS:
+            if now - t0 >= secs_for(variants[clip_no][1]):
                 session.save_clip(rows, frames, now - t0, label, distance, facing, rewind_to=(step, clip_no))
                 note, ok = clip_quality(rows)
                 if not ok:
                     note += "  <- POOR, press r to redo"
                 if sound:
-                    beep(500 if ok else 300, 150 if ok else 500)
+                    sounds.play("good" if ok else "poor")
                 clip_no += 1
-                if clip_no < CLIPS[label]:
+                if clip_no < len(variants):
                     state, until = "countdown", now + args.rest
                 else:
                     step, clip_no, state = step + 1, 0, "idle"
                     if step == len(steps):
                         break
-                    distance, facing, label = steps[step]
+                    stepno, distance, facing, label, variants = steps[step]
 
         sides = assign_hands(pose, hands, w, h)
-        status = (f"body {'OK' if pose.pose_landmarks else '--'}   L hand {'OK' if 'l' in sides else '--'}"
-                  f"   R hand {'OK' if 'r' in sides else '--'}   {fps:.0f} fps   {session.count} clips saved")
-        progress = (step + (clip_no / CLIPS[label] if state != "idle" else 0)) / len(steps)
+        det = (bool(pose.pose_landmarks), "l" in sides, "r" in sides)
+        info = f"{session.count} clips saved   |   {fps:.0f} fps"
+        progress = (step + (clip_no / len(variants) if state != "idle" else 0)) / len(steps)
         name = label.replace("_", " ").upper()
-        hand, style = VARIANTS[label][clip_no % len(VARIANTS[label])]
+        hand, style = variants[min(clip_no, len(variants) - 1)]
         hand_text = "EITHER hand" if hand == "either" else f"YOUR {hand.upper()} hand"
         where = f"{distance} m away, {FACING_TEXT[facing]}"
         if state == "idle":
-            hand, style = VARIANTS[label][0]
+            hand, style = variants[0]
             hand_text = "EITHER hand" if hand == "either" else f"YOUR {hand.upper()} hand"
             banner = [f"NEXT: {name}  -  {hand_text}",
-                      f"Step {step + 1}/{len(steps)}: stand {where}",
-                      f"{PROMPTS[label].split(': ', 1)[1]}   ({CLIPS[label]} clips)   Press SPACE when ready"]
+                      f"Step {stepno}/{total}: stand {where}",
+                      f"{PROMPTS[label].split(': ', 1)[1]}   ({len(variants)} clips x {secs_for(style):g} s)"]
             warn = framing_warning(pose, w, h)
             notice = ("WARNING: " + warn, (0, 200, 255)) if warn else None
             if note and not warn:
                 notice = (note, (0, 0, 255) if "POOR" in note else (120, 255, 120))
-            draw(frame, pose, hands, mirror, banner, "", (150, 0, 0), status, progress, notice)
+            draw(frame, pose, hands, mirror, banner, "", BG_IDLE, det, info, progress, notice, False, show_help,
+                 lengths, panel_open)
         else:
             banner = [f"{name}  -  {hand_text}",
-                      f"clip {clip_no + 1} of {CLIPS[label]}:  {style}",
+                      f"clip {clip_no + 1} of {len(variants)}:  {style}  ({secs_for(style):g} s)",
                       where]
             if state == "countdown":
-                draw(frame, pose, hands, mirror, banner, str(math.ceil(until - now)), (0, 130, 220), status, progress)
+                draw(frame, pose, hands, mirror, banner, str(math.ceil(until - now)), BG_GET_READY, det, info, progress,
+                     show_help=show_help, lengths=lengths, panel_open=panel_open)
             else:
-                draw(frame, pose, hands, mirror, banner, "GO", (0, 150, 0), status, progress)
+                draw(frame, pose, hands, mirror, banner, "GO", BG_RECORDING, det, info, progress, recording=True)
+
+        while clicks:
+            x, y = clicks.pop()
+            if state == "recording":
+                continue
+            if inside(LENGTH_BTN, x, y):
+                panel_open = not panel_open
+            elif panel_open:
+                for k, style in enumerate(STYLES):
+                    for rect, delta in zip(panel_rects(k), (-0.5, 0.5)):
+                        if inside(rect, x, y):
+                            lengths[style] = min(10.0, max(1.0, lengths[style] + delta))
 
         key = cv2.waitKey(1) & 0xFF
         if key == ord("q"):
             break
         if key == ord(" ") and state == "idle":
             state, until, note = "countdown", now + args.rest + (FIRST_COUNTDOWN - COUNTDOWN), ""
+        elif key in (ord("-"), ord("="), ord("+")) and state != "recording":
+            style = variants[min(clip_no, len(variants) - 1)][1] if state != "idle" else variants[0][1]
+            lengths[style] = min(10.0, max(1.0, secs_for(style) + (-0.5 if key == ord("-") else 0.5)))
+            note = f"{style}: clips are now {lengths[style]:g} s"
+        elif key == ord("h"):
+            show_help = not show_help
         elif key == ord("p"):
             paused = True
+            sounds.cancel()
         elif key == ord("m"):
             mirror = not mirror
         elif key == ord("s"):
             sound = not sound
+            sounds.cancel()
+            scheduled = False   # re-arm: turning sound on mid-countdown schedules the rest
         elif key == ord("b") and state == "idle" and step > 0:
             step, clip_no = step - 1, 0   # revisit the previous step (recorded clips stay; use r to undo them)
         elif key == ord("n"):
@@ -483,6 +766,7 @@ def record(args):
             full = cv2.getWindowProperty(WIN, cv2.WND_PROP_FULLSCREEN) == cv2.WINDOW_FULLSCREEN
             cv2.setWindowProperty(WIN, cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_NORMAL if full else cv2.WINDOW_FULLSCREEN)
 
+    sounds.close()
     session.close()
     cv2.destroyAllWindows()
     if session.count:
@@ -490,7 +774,11 @@ def record(args):
     else:
         print("No clips recorded, so no files were saved.")
     if step < len(steps):
-        print(f"Stopped at step {step + 1}/{len(steps)}. Resume with --start {step + 1}")
+        if args.resume or session.count:
+            print(f"Stopped early. Continue (and redo anything rejected) with: "
+                  f"python record_gestures.py record --resume {session.name}")
+        else:
+            print(f"Stopped at step {step + 1}/{len(steps)}. Resume with --start {step + 1}")
 
 
 def cameras(args):
@@ -505,6 +793,22 @@ def cameras(args):
             print(f"--source {i}: {frame.shape[1]}x{frame.shape[0]}")
     if not found:
         print("No webcams found.")
+
+
+def convert(args):
+    """Make already-saved clips playable in browsers and video extensions (H.264)."""
+    try:
+        import imageio_ffmpeg   # noqa: F401
+    except ImportError:
+        sys.exit("Install the converter first: python -m pip install imageio-ffmpeg")
+    videos = sorted(Path(args.path).rglob("*.mp4")) if Path(args.path).is_dir() else [Path(args.path)]
+    for n, video in enumerate(videos, 1):
+        cap = cv2.VideoCapture(str(video))
+        already = int(cap.get(cv2.CAP_PROP_FOURCC)).to_bytes(4, "little") in (b"avc1", b"h264")
+        cap.release()
+        if not already:
+            print(f"[{n}/{len(videos)}] {video}", "ok" if to_h264(video) else "FAILED")
+    print("Done.")
 
 
 def extract(args):
@@ -572,10 +876,12 @@ def main():
     sub = parser.add_subparsers(dest="cmd", required=True)
 
     rec = sub.add_parser("record", help="run a guided recording session")
-    rec.add_argument("--person", required=True, type=name_arg, help="who is performing, e.g. joe")
-    rec.add_argument("--camera", required=True, type=name_arg, help="laptop or k1")
+    rec.add_argument("--person", type=name_arg, help="who is performing, e.g. joe")
+    rec.add_argument("--camera", type=name_arg, help="laptop or k1")
     rec.add_argument("--source", default="0", help="webcam index or video file (default 0)")
+    rec.add_argument("--resume", metavar="SESSION", help="continue an old session: record its missing clips and replace rejected ones")
     rec.add_argument("--rest", type=float, default=COUNTDOWN, help=f"seconds of rest/get-ready between clips (default {COUNTDOWN:g})")
+    rec.add_argument("--sound-lead", type=float, default=SOUND_LEAD, help="start the GO sound this many seconds early (raise if it sounds late)")
     rec.add_argument("--size", help="webcam resolution to request, e.g. 1280x720")
     rec.add_argument("--ros-topic", help="read the K1 head camera from this ROS2 image topic instead")
     rec.add_argument("--start", type=int, default=1, help="step to start at, to resume a session")
@@ -585,12 +891,15 @@ def main():
     st = sub.add_parser("stats", help="summarize what's been recorded")
     st.add_argument("--dir", default=str(DATA_DIR))
 
+    cv = sub.add_parser("convert", help="re-encode saved clips as H.264 so video players can open them")
+    cv.add_argument("path", nargs="?", default=str(CLIPS_DIR), help="a clip, or a folder of clips (default clips/)")
+
     ex = sub.add_parser("extract", help="re-run landmarks on a folder of saved clips")
     ex.add_argument("clip_dir")
     ex.add_argument("--out", default="data-reextract")
 
     args = parser.parse_args()
-    {"record": record, "stats": stats, "extract": extract, "cameras": cameras}[args.cmd](args)
+    {"record": record, "stats": stats, "extract": extract, "cameras": cameras, "convert": convert}[args.cmd](args)
 
 
 if __name__ == "__main__":

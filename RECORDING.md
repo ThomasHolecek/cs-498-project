@@ -107,13 +107,15 @@ Then press **f** for fullscreen so the performer can see the screen from 4 m.
 
 ### What the screen means
 
-| Border | Meaning |
+| Screen | Meaning |
 |---|---|
-| 🔴 Red | Waiting. The screen shows where to stand and the next gesture. The operator presses **SPACE**. |
-| 🟡 Yellow countdown | Get ready. The first countdown of each step is 5 s, so you have time to walk to your mark. |
-| 🟢 Green **GO** | Do the gesture **now**. You have 1.5 seconds. |
+| Dark blue bar, `not recording` | Waiting. It shows where to stand, which hand to use and the next gesture. The operator presses **SPACE**. |
+| Orange bar and a big countdown | Get ready. The first countdown of each step is 7 s, so you have time to walk to your mark. |
+| Red bar, red frame around the whole window, blinking **REC**, big **GO** | The camera is recording. Do the gesture **now**. You have 3 seconds (3.5 s for `stop`, 4.5 s for the slow-and-big clips). The banner shows the time for each clip. |
 
-After GO, the next clip's countdown starts automatically until the step is done. Then it goes back to red for the next step.
+The footer shows green or red dots for whether the body, left hand and right hand are being detected. Press **h** for the key list.
+
+After GO, the next clip's countdown starts automatically until the step is done. Then it goes back to the blue waiting screen for the next step.
 
 ### The order
 
@@ -129,6 +131,9 @@ The number of clips per gesture is set by `CLIPS` near the top of `record_gestur
 | **r** | Redo the last clip. Press again to go back further. |
 | **n** | Skip this step |
 | **f** | Toggle fullscreen |
+| **Clip lengths** button (click it) | Opens a panel with a **-** / **+** for each kind of clip (normal speed, slow and big, hold still...). Click the button again to close it. |
+| **-** / **+** keys | Same change from the keyboard, for the style shown on screen. Each step is 0.5 s (range 1�10 s) and lasts for the rest of the session. |
+| **h** | Show / hide the key list |
 | **b** | Go back one step (while waiting) |
 | **p** | Pause / resume |
 | **m** | Flip the mirrored preview |
@@ -149,6 +154,11 @@ The number of clips per gesture is set by `CLIPS` near the top of `record_gestur
 
 - **Bad clip during a session:** press **r**.
 - **Bad run afterward:** delete both `data/<run name>.csv` and `clips/<run name>/`.
+- **Continue a past session and replace rejected clips:** reject the bad clips in `review_clips.py` (**X**), then run
+  ```
+  python record_gestures.py record --resume <run name>
+  ```
+  It adds to that same session (same CSV and `clips/` folder) and records only what's missing: the steps you never got to, the rest of a step you stopped partway through, and a replacement for every rejected clip, with the hand and style that clip needed. The rejected clips stay on disk but are ignored by training. Quitting early prints the same command to continue again. Review again afterward to trim the new clips.
 - **Stopped partway:** the terminal prints the step to resume from. Run the same command with `--start <step>`. The resumed part saves as its own run, which is fine.
 
 ---
