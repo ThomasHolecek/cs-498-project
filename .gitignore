@@ -5,3 +5,7 @@ run_logs/
 __pycache__/
 *.log
 data-reextract/
+.DS_Store
+.venv/
+__pycache__/
+*.task
