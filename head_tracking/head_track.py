@@ -381,25 +381,25 @@ class HeadTracker:
     # ---------------------------------------------------------------- target
     
     def choose_target(self, people):
-        def distance(self, person):
-                last_x , last_y = self.last_target.box_center
-                person_x, person_y = person.box_center
-                return math.hypot(last_x - person_x, last_y - person_y)
         """
         people: list[Person] detected this frame (may be empty).
         Returns the Person that is our locked target this frame, or None.
 
         """
+        def distance( person):
+            last_x , last_y = self.last_target.box_center
+            person_x, person_y = person.box_center
+            return math.hypot(last_x - person_x, last_y - person_y)
         if self.last_target is None: #if there is no target
             return None
         if not people: #if there are no people in the frame
             return None
-        nearest_person = min(people, key=self.distance) #find person in the people the robot sees who is closest to the last frame's target
+        nearest_person = min(people, key=distance) #find person in the people the robot sees who is closest to the last frame's target
 
-        if self.distance(nearest_person) > self.max_jump: #if the nearest person is to far away from the last frame
+        if distance(nearest_person) > self.max_jump: #if the nearest person is to far away from the last frame
             return None
         self.last_target = nearest_person #update the last target to the new person
-        
+
         return nearest_person #return the new target
         
 
