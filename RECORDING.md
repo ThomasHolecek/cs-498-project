@@ -94,7 +94,7 @@ The screen now tells the performer which hand to use for every clip (the perform
 
 ---
 
-## 4. Record a session (about 15–20 min per person)
+## 4. Record a session (about 25–30 min per person)
 
 Work in pairs. One person **performs**, the other **operates** the keyboard. Rotate so everyone performs once.
 
@@ -132,7 +132,7 @@ The number of clips per gesture is set by `CLIPS` near the top of `record_gestur
 | **n** | Skip this step |
 | **f** | Toggle fullscreen |
 | **Clip lengths** button (click it) | Opens a panel with a **-** / **+** for each kind of clip (normal speed, slow and big, hold still...). Click the button again to close it. |
-| **-** / **+** keys | Same change from the keyboard, for the style shown on screen. Each step is 0.5 s (range 1�10 s) and lasts for the rest of the session. |
+| **-** / **+** keys | Same change from the keyboard, for the style shown on screen. Each step is 0.5 s (range 1�10 s) and lasts for the rest of the session. |
 | **h** | Show / hide the key list |
 | **b** | Go back one step (while waiting) |
 | **p** | Pause / resume |
@@ -187,6 +187,8 @@ The number of clips per gesture is set by `CLIPS` near the top of `record_gestur
    | **1–4** | Relabel: come_here, shoo, stop, none |
    | **N / ENTER** | Accept and go to the next clip. **P** goes back. |
    | **Q** | Save and quit. Next time it starts at the first clip you haven't reviewed. |
+
+   **V** switches between the video and a skeleton-only view drawn from the saved landmarks. To just watch gestures without the person, and without saving anything, run `python review_clips.py --view --skeleton --label shoo` (add `--person joe` or `--session <run name>` to narrow it).
 
    Click or drag on the timeline to scrub. The yellow line shows how fast the arm is moving, so the gesture is usually where it's high. Don't trim `stop` or `none` clips unless something is wrong with them.
 

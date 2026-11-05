@@ -62,7 +62,7 @@
  "thomas_laptop_20261027-182155-013": {
   "end": 18,
   "reject": false,
-  "start": 0
+  "start": 7
  },
  "thomas_laptop_20261027-182155-014": {
   "end": 18,
@@ -76,27 +76,27 @@
  },
  "thomas_laptop_20261027-182155-016": {
   "end": 19,
-  "reject": false,
+  "reject": true,
   "start": 8
  },
  "thomas_laptop_20261027-182155-017": {
   "end": 18,
-  "reject": false,
+  "reject": true,
   "start": 4
  },
  "thomas_laptop_20261027-182155-018": {
   "end": 19,
-  "reject": false,
+  "reject": true,
   "start": 8
  },
  "thomas_laptop_20261027-182155-019": {
   "end": 18,
-  "reject": false,
+  "reject": true,
   "start": 6
  },
  "thomas_laptop_20261027-182155-020": {
   "end": 19,
-  "reject": false,
+  "reject": true,
   "start": 7
  },
  "thomas_laptop_20261027-182155-021": {
@@ -117,7 +117,7 @@
  "thomas_laptop_20261027-182155-024": {
   "end": 18,
   "reject": false,
-  "start": 2
+  "start": 6
  },
  "thomas_laptop_20261027-182155-025": {
   "end": 18,
@@ -146,12 +146,12 @@
  },
  "thomas_laptop_20261027-182155-032": {
   "end": 19,
-  "reject": false,
+  "reject": true,
   "start": 14
  },
  "thomas_laptop_20261027-182155-033": {
   "end": 18,
-  "reject": false,
+  "reject": true,
   "start": 10
  },
  "thomas_laptop_20261027-182155-034": {
@@ -162,7 +162,7 @@
  "thomas_laptop_20261027-182155-035": {
   "end": 20,
   "reject": false,
-  "start": 3
+  "start": 6
  },
  "thomas_laptop_20261027-182155-036": {
   "end": 20,
@@ -180,7 +180,7 @@
   "start": 0
  },
  "thomas_laptop_20261027-182155-039": {
-  "end": 20,
+  "end": 14,
   "reject": false,
   "start": 0
  },
@@ -240,7 +240,7 @@
   "start": 0
  },
  "thomas_laptop_20261027-182155-051": {
-  "end": 31,
+  "end": 27,
   "reject": false,
   "start": 7
  },
@@ -255,9 +255,9 @@
   "start": 9
  },
  "thomas_laptop_20261027-182155-054": {
-  "end": 44,
+  "end": 24,
   "reject": false,
-  "start": 0
+  "start": 8
  },
  "thomas_laptop_20261027-182155-055": {
   "end": 31,
@@ -275,7 +275,7 @@
   "start": 7
  },
  "thomas_laptop_20261027-182155-058": {
-  "end": 48,
+  "end": 29,
   "reject": false,
   "start": 10
  },
@@ -285,14 +285,14 @@
   "start": 11
  },
  "thomas_laptop_20261027-182155-060": {
-  "end": 25,
+  "end": 17,
   "reject": false,
   "start": 5
  },
  "thomas_laptop_20261027-182155-061": {
   "end": 41,
   "reject": false,
-  "start": 0
+  "start": 11
  },
  "thomas_laptop_20261027-182155-062": {
   "end": 24,
@@ -370,9 +370,9 @@
   "start": 12
  },
  "thomas_laptop_20261027-182155-077": {
-  "end": 53,
+  "end": 47,
   "reject": false,
-  "start": 0
+  "start": 32
  },
  "thomas_laptop_20261027-182155-078": {
   "end": 44,
@@ -445,24 +445,24 @@
   "start": 0
  },
  "thomas_laptop_20261027-182155-092": {
-  "end": 27,
+  "end": 26,
   "reject": false,
   "start": 5
  },
  "thomas_laptop_20261027-182155-093": {
-  "end": 26,
+  "end": 23,
   "reject": false,
   "start": 4
  },
  "thomas_laptop_20261027-182155-094": {
-  "end": 28,
-  "reject": false,
-  "start": 16
- },
- "thomas_laptop_20261027-182155-095": {
   "end": 26,
   "reject": false,
-  "start": 2
+  "start": 14
+ },
+ "thomas_laptop_20261027-182155-095": {
+  "end": 24,
+  "reject": false,
+  "start": 3
  },
  "thomas_laptop_20261027-182155-096": {
   "end": 27,
@@ -470,7 +470,7 @@
   "start": 8
  },
  "thomas_laptop_20261027-182155-097": {
-  "end": 30,
+  "end": 26,
   "reject": false,
   "start": 2
  },
@@ -536,7 +536,7 @@
  },
  "thomas_laptop_20261027-182155-110": {
   "end": 35,
-  "reject": false,
+  "reject": true,
   "start": 6
  },
  "thomas_laptop_20261027-182155-111": {
@@ -595,7 +595,7 @@
   "start": 10
  },
  "thomas_laptop_20261027-182155-122": {
-  "end": 44,
+  "end": 25,
   "reject": false,
   "start": 10
  },
@@ -627,7 +627,7 @@
  "thomas_laptop_20261027-182155-128": {
   "end": 26,
   "reject": false,
-  "start": 6
+  "start": 9
  },
  "thomas_laptop_20261027-182155-129": {
   "end": 24,
@@ -637,7 +637,7 @@
  "thomas_laptop_20261027-182155-130": {
   "end": 29,
   "reject": false,
-  "start": 3
+  "start": 11
  },
  "thomas_laptop_20261027-182155-131": {
   "end": 29,
@@ -715,7 +715,7 @@
   "start": 7
  },
  "thomas_laptop_20261027-182155-146": {
-  "end": 45,
+  "end": 40,
   "reject": false,
   "start": 16
  },

@@ -521,6 +521,8 @@ def screen_size():
         return user32.GetSystemMetrics(0), user32.GetSystemMetrics(1)
     except (AttributeError, OSError):
         pass
+    if sys.platform == "darwin":   # tkinter crashes Python on some Macs; use the default window size
+        return None
     try:
         import tkinter
         root = tkinter.Tk()
