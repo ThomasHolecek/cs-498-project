@@ -94,7 +94,7 @@ The screen now tells the performer which hand to use for every clip (the perform
 
 ---
 
-## 4. Record a session (about 15–20 min per person)
+## 4. Record a session (about 25–30 min per person)
 
 Work in pairs. One person **performs**, the other **operates** the keyboard. Rotate so everyone performs once.
 
@@ -132,7 +132,7 @@ The number of clips per gesture is set by `CLIPS` near the top of `record_gestur
 | **n** | Skip this step |
 | **f** | Toggle fullscreen |
 | **Clip lengths** button (click it) | Opens a panel with a **-** / **+** for each kind of clip (normal speed, slow and big, hold still...). Click the button again to close it. |
-| **-** / **+** keys | Same change from the keyboard, for the style shown on screen. Each step is 0.5 s (range 1�10 s) and lasts for the rest of the session. |
+| **-** / **+** keys | Same change from the keyboard, for the style shown on screen. Each step is 0.5 s (range 1�10 s) and lasts for the rest of the session. |
 | **h** | Show / hide the key list |
 | **b** | Go back one step (while waiting) |
 | **p** | Pause / resume |

@@ -52,6 +52,7 @@ def main():
         if g[POSE_COLS[0]].notna().mean() < args.min_detect:
             skipped += 1
             continue
+
         t_of = dict(zip(g["frame"], g["t_ms"]))
         t0 = t_of.get(tr.get("start"), 0.0)
         t1 = t_of.get(tr.get("end"), g["t_ms"].max())
