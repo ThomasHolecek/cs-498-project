@@ -360,6 +360,8 @@ class HeadTracker:
         # The last Person we believed was our target. None means no lock.
         self.last_target = None
 
+        # where do all of htese values come from ? check against booster documentation
+
         self.kp_yaw = 0.08        #  starting value of yaw
         self.kp_pitch = 0.06      # starting value of pitch
         self.dead_zone = 0.05     # fraction of the frame to ignore 
@@ -379,12 +381,12 @@ class HeadTracker:
         return self.last_target is not None
 
     # ---------------------------------------------------------------- target
-    
+    def distance(self, person):
+        last_x , last_y = self.last_target.box_center
+        person_x, person_y = person.box_center
+        return math.hypot(last_x - person_x, last_y - person_y)
     def choose_target(self, people):
-        def distance(self, person):
-                last_x , last_y = self.last_target.box_center
-                person_x, person_y = person.box_center
-                return math.hypot(last_x - person_x, last_y - person_y)
+        
         """
         people: list[Person] detected this frame (may be empty).
         Returns the Person that is our locked target this frame, or None.
