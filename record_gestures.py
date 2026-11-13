@@ -16,7 +16,9 @@ Setup:
 Usage:
     python record_gestures.py record --person joe --camera laptop
     python record_gestures.py record --person joe --camera k1 --ros-topic <head camera topic>
-    python record_gestures.py record --person joe --camera laptop --start 20   # resume at step 20
+    python record_gestures.py record --person joe --camera k1 --ros-topic <colour topic> --depth-topic <depth topic>
+        (adds a depth-in-metres column, *_d, for every landmark; list topics with: ros2 topic list)
+    python record_gestures.py record --person joe --camera laptop --start 20  # resume at step 20
     python record_gestures.py cameras                                          # find webcam indexes
     python record_gestures.py stats                                            # what you have so far
     python record_gestures.py extract clips/joe_laptop_20261019-140501         # re-run landmarks on saved clips
@@ -89,7 +91,12 @@ META_COLS = ["clip_id", "label", "person", "camera", "distance_m", "facing", "ha
 POSE_COLS = [f"pose{i}_{c}" for i in range(33) for c in "xyzv"]                # 33 body points (x, y, z, visibility)
 HAND_COLS = [f"{s}hand{i}_{c}" for s in "lr" for i in range(21) for c in "xyz"]  # the person's left / right hand
 GESTURE_COLS = ["lhand_gesture", "lhand_score", "rhand_gesture", "rhand_score"]  # MediaPipe's built-in guess
-COLUMNS = META_COLS + POSE_COLS + HAND_COLS + GESTURE_COLS
+# Depth (metres from the K1 depth camera) at each landmark's x,y. Empty when no depth topic is used or there's no valid reading.
+DEPTH_COLS = ([f"pose{i}_d" for i in range(33)] + [f"{s}hand{i}_d" for s in "lr" for i in range(21)]
+              + ["torso_depth_m", "depth_age_ms"])
+COLUMNS = META_COLS + POSE_COLS + HAND_COLS + GESTURE_COLS + DEPTH_COLS   # depth last, so older columns keep their place
+MIN_M, MAX_M = 0.15, 10.0   # depth readings outside this range count as "no reading"
+TORSO = (11, 12, 23, 24)    # shoulders + hips, for the single "how far is the person" number
 
 MIN_DETECTED = 0.8   # a clip whose body is found in fewer frames than this gets flagged for redo
 NOSE, LEFT_WRIST, RIGHT_WRIST = 0, 15, 16   # pose landmark ids for the PERSON's left and right wrist
@@ -194,20 +201,61 @@ def assign_hands(pose, hands, w, h):
     return {"l": 0, "r": 1} if straight <= swapped else {"l": 1, "r": 0}
 
 
-def make_row(meta, frame_idx, t_ms, w, h, pose, hands):
-    """One CSV row: the clip's labels plus every landmark found in this frame."""
+def depth_to_meters(msg):
+    """sensor_msgs/Image (16UC1 millimetres or 32FC1 metres) -> float32 array in metres."""
+    enc = msg.encoding.lower()
+    if enc in ("16uc1", "mono16"):
+        arr = np.frombuffer(msg.data, np.uint16).reshape(msg.height, msg.step // 2)[:, :msg.width]
+        return arr.astype(np.float32) * 0.001
+    if enc == "32fc1":
+        arr = np.frombuffer(msg.data, np.float32).reshape(msg.height, msg.step // 4)[:, :msg.width]
+        return arr.copy()
+    raise ValueError(f"Unsupported depth encoding {msg.encoding!r} (expected 16UC1 or 32FC1)")
+
+
+def sample_depth(depth, xn, yn, radius=2):
+    """Median valid depth (metres) in a small patch around normalised point (xn, yn), or None.
+
+    Landmarks are 0-1, so they map onto the depth image at any resolution. This ASSUMES the depth
+    image is aligned with the colour image (check the numbers on the robot)."""
+    h, w = depth.shape
+    x, y = int(round(xn * (w - 1))), int(round(yn * (h - 1)))
+    if not (0 <= x < w and 0 <= y < h):
+        return None
+    patch = depth[max(0, y - radius):y + radius + 1, max(0, x - radius):x + radius + 1]
+    vals = patch[np.isfinite(patch) & (patch > MIN_M) & (patch < MAX_M)]
+    return float(np.median(vals)) if vals.size else None
+
+
+def make_row(meta, frame_idx, t_ms, w, h, pose, hands, depth=None):
+    """One CSV row: the clip's labels plus every landmark found in this frame.
+    depth: float32 metres array from the depth camera, or None (then the depth columns stay empty)."""
     row = dict(meta, frame=frame_idx, t_ms=t_ms, img_w=w, img_h=h)
+
+    def put_depth(prefix, i, p):
+        d = sample_depth(depth, p.x, p.y) if depth is not None else None
+        if d is not None:
+            row[f"{prefix}{i}_d"] = round(d, 3)
+        return d
+
     if pose.pose_landmarks:
+        torso = []
         for i, p in enumerate(pose.pose_landmarks[0]):
             row[f"pose{i}_x"] = round(p.x, 5)
             row[f"pose{i}_y"] = round(p.y, 5)
             row[f"pose{i}_z"] = round(p.z, 5)
             row[f"pose{i}_v"] = round(p.visibility or 0.0, 3)
+            d = put_depth("pose", i, p)
+            if i in TORSO and d is not None:
+                torso.append(d)
+        if torso:
+            row["torso_depth_m"] = round(float(np.median(torso)), 3)
     for side, k in assign_hands(pose, hands, w, h).items():
         for i, p in enumerate(hands.hand_landmarks[k]):
             row[f"{side}hand{i}_x"] = round(p.x, 5)
             row[f"{side}hand{i}_y"] = round(p.y, 5)
             row[f"{side}hand{i}_z"] = round(p.z, 5)
+            put_depth(f"{side}hand", i, p)
         if hands.gestures and hands.gestures[k]:
             top = hands.gestures[k][0]
             row[f"{side}hand_gesture"] = top.category_name
@@ -394,9 +442,11 @@ class Session:
                 self.n = max(self.n, int(clip_id.rsplit("-", 1)[1]))
             for video in self.clip_dir.glob("*.mp4"):
                 self.n = max(self.n, int(video.stem.split("-")[0]))
+            with open(self.csv_path, newline="") as f:
+                header = next(csv.reader(f))   # old sessions may predate the depth columns: keep their layout
             self.file = open(self.csv_path, "r+", newline="")
             self.file.seek(0, 2)
-            self.writer = csv.DictWriter(self.file, COLUMNS, restval="")
+            self.writer = csv.DictWriter(self.file, header, restval="", extrasaction="ignore")
         else:
             self.file = open(self.csv_path, "w", newline="")
             self.writer = csv.DictWriter(self.file, COLUMNS, restval="")
@@ -449,7 +499,7 @@ def webcam_frames(source, size=None):
             ok, frame = cap.read()
             if ok:
                 misses, started = 0, True
-                yield frame
+                yield frame, None, None   # (frame, depth metres, depth age ms): webcams have no depth
             elif is_webcam and misses < (150 if started else 500):   # webcams can take several seconds to start up
                 misses += 1
                 time.sleep(0.02)
@@ -475,8 +525,14 @@ def ros_to_bgr(msg):
     raise ValueError(f"Unsupported image encoding {msg.encoding!r}")
 
 
-def ros_frames(topic):
-    """Yield frames from a ROS2 image topic. Run from a shell with ROS2 sourced that can see the robot."""
+def stamp_s(msg):
+    return msg.header.stamp.sec + msg.header.stamp.nanosec * 1e-9
+
+
+def ros_frames(topic, depth_topic=None):
+    """Yield (frame, depth metres or None, depth age ms or None) from a ROS2 image topic, plus the
+    depth-camera frame closest in time if depth_topic is given. Run from a shell with ROS2 sourced."""
+    import collections
     import rclpy
     from rclpy.qos import qos_profile_sensor_data
     from sensor_msgs.msg import Image
@@ -484,19 +540,38 @@ def ros_frames(topic):
     rclpy.init()
     node = rclpy.create_node("gesture_recorder")
     latest, fresh = [None], threading.Event()
+    depth_buf = collections.deque(maxlen=8)   # recent depth messages, so the closest in time can be picked
 
     def on_image(msg):
         latest[0] = msg
         fresh.set()
 
     node.create_subscription(Image, topic, on_image, qos_profile_sensor_data)
+    if depth_topic:
+        node.create_subscription(Image, depth_topic, depth_buf.append, qos_profile_sensor_data)
     threading.Thread(target=rclpy.spin, args=(node,), daemon=True).start()
+    warned = False
     try:
         while True:
             if not fresh.wait(timeout=5):
                 sys.exit(f"No images on {topic} for 5 s. Check the name with: ros2 topic list")
             fresh.clear()
-            yield ros_to_bgr(latest[0])
+            msg = latest[0]
+            depth, age = None, None
+            if depth_topic:
+                if not depth_buf:
+                    if not warned:
+                        print(f"WARNING: no depth images on {depth_topic} yet; depth columns stay empty until they arrive.")
+                        warned = True
+                else:
+                    cs = stamp_s(msg)
+                    best = min(list(depth_buf), key=lambda d: abs(stamp_s(d) - cs)) if cs > 0 else depth_buf[-1]
+                    age = round((cs - stamp_s(best)) * 1000, 1) if cs > 0 else 0.0
+                    try:
+                        depth = depth_to_meters(best)
+                    except ValueError as err:
+                        sys.exit(str(err))
+            yield ros_to_bgr(msg), depth, age
     finally:
         rclpy.shutdown()
 
@@ -673,7 +748,9 @@ def record(args):
             sys.exit(f"--start must be between 1 and {total}")
         session, start = Session(f"{person}_{camera}_{time.strftime('%Y%m%d-%H%M%S')}"), args.start - 1
     size = tuple(int(v) for v in args.size.lower().split("x")) if args.size else None
-    source = ros_frames(args.ros_topic) if args.ros_topic else webcam_frames(args.source, size)
+    if args.depth_topic and not args.ros_topic:
+        sys.exit("--depth-topic needs --ros-topic (webcams have no depth).")
+    source = ros_frames(args.ros_topic, args.depth_topic) if args.ros_topic else webcam_frames(args.source, size)
     mirror = args.ros_topic is None   # mirror the preview for a webcam you're facing
     lengths = {style: STYLE_SECONDS.get(style, CLIP_SECONDS) for style in STYLES}   # seconds per style, editable while recording
     panel_open, clicks = False, []
@@ -692,7 +769,7 @@ def record(args):
     fit_window(WIN, CANVAS_W, BANNER_H + VIDEO_H + FOOTER_H)
     cv2.setMouseCallback(WIN, lambda event, x, y, flags, param: clicks.append((x, y)) if event == cv2.EVENT_LBUTTONDOWN else None)
 
-    for frame in source:
+    for frame, depth, depth_age in source:
         if paused:   # keep reading the camera so it doesn't buffer, but do nothing else
             key = cv2.waitKey(1) & 0xFF
             paused = key != ord("p")
@@ -717,7 +794,10 @@ def record(args):
         if state == "recording":
             meta = dict(label=label, person=person, camera=camera, distance_m=distance, facing=facing,
                         hand=variants[clip_no][0])
-            rows.append(make_row(meta, len(rows), round((now - t0) * 1000), w, h, pose, hands))
+            row = make_row(meta, len(rows), round((now - t0) * 1000), w, h, pose, hands, depth)
+            if depth_age is not None:
+                row["depth_age_ms"] = depth_age
+            rows.append(row)
             frames.append(frame)
             if now - t0 >= secs_for(variants[clip_no][1]):
                 session.save_clip(rows, frames, now - t0, label, distance, facing, rewind_to=(step, clip_no))
@@ -738,6 +818,8 @@ def record(args):
         sides = assign_hands(pose, hands, w, h)
         det = (bool(pose.pose_landmarks), "l" in sides, "r" in sides)
         info = f"{session.count} clips saved   |   {fps:.0f} fps"
+        if args.depth_topic:
+            info += "   |   depth " + ("ok" if depth is not None else "MISSING")
         progress = (step + (clip_no / len(variants) if state != "idle" else 0)) / len(steps)
         name = label.replace("_", " ").upper()
         hand, style = variants[min(clip_no, len(variants) - 1)]
@@ -928,6 +1010,7 @@ def main():
     rec.add_argument("--sound-lead", type=float, default=SOUND_LEAD, help="start the GO sound this many seconds early (raise if it sounds late)")
     rec.add_argument("--size", help="webcam resolution to request, e.g. 1280x720")
     rec.add_argument("--ros-topic", help="read the K1 head camera from this ROS2 image topic instead")
+    rec.add_argument("--depth-topic", help="also record each landmark's depth (metres) from this ROS2 depth image topic (16UC1 or 32FC1); needs --ros-topic")
     rec.add_argument("--start", type=int, default=1, help="step to start at, to resume a session")
 
     sub.add_parser("cameras", help="list webcams that work")
