@@ -18,6 +18,7 @@ Usage:
     python record_gestures.py record --person joe --camera k1 --ros-topic <head camera topic>
     python record_gestures.py record --person joe --camera k1 --ros-topic <colour topic> --depth-topic <depth topic>
         (adds a depth-in-metres column, *_d, for every landmark; list topics with: ros2 topic list)
+    ... record --web    on a robot with no screen: open http://<robot-ip>:8080 in your laptop's browser instead of a window
     python record_gestures.py record --person joe --camera laptop --start 20  # resume at step 20
     python record_gestures.py cameras                                          # find webcam indexes
     python record_gestures.py stats                                            # what you have so far
@@ -47,7 +48,9 @@ try:
     import winsound
 except ImportError:   # not Windows
     winsound = None
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from urllib.parse import parse_qs, urlparse
 
 import cv2
 import mediapipe as mp
@@ -576,6 +579,121 @@ def ros_frames(topic, depth_topic=None):
         rclpy.shutdown()
 
 
+# ---- Remote UI: run on the robot with no screen, use the session from a browser (--web) ----
+
+WEB_PAGE = """<!doctype html><meta charset=utf-8><meta name=viewport content="width=device-width,initial-scale=1">
+<title>gesture recorder</title>
+<style>body{margin:0;background:#111;color:#eee;font:15px sans-serif;text-align:center}
+img{width:100%;max-width:1280px;display:block;margin:0 auto}
+button{font:inherit;padding:10px 16px;margin:4px;background:#333;color:#eee;border:1px solid #888;border-radius:6px;cursor:pointer}
+button.go{background:#2a7a2a;font-size:18px}small{color:#999}</style>
+<img src="/stream.mjpg">
+<div id=bar></div>
+<small>Keys work too (SPACE, r, n, b, p, m, - / +, h, q). Click anywhere once to enable sound.</small>
+<script>
+const KEYS=[[" ","START (space)","go"],["r","Redo last"],["n","Skip step"],["b","Back step"],["p","Pause"],["-","Shorter"],["=","Longer"],["m","Mirror"],["h","Help"],["q","Quit"]];
+const bar=document.getElementById("bar");
+let actx=null,mute=false;
+function send(k){fetch("/key?k="+encodeURIComponent(k),{method:"POST"});}
+for(const [k,t,c] of KEYS){const b=document.createElement("button");b.textContent=t;if(c)b.className=c;b.onclick=()=>send(k);bar.appendChild(b);}
+const sb=document.createElement("button");sb.textContent="Sound: on";sb.onclick=()=>{mute=!mute;sb.textContent="Sound: "+(mute?"off":"on");};bar.appendChild(sb);
+document.addEventListener("keydown",e=>{if(e.ctrlKey||e.metaKey||e.altKey)return;
+  if(KEYS.some(x=>x[0]===e.key)){e.preventDefault();send(e.key);}});
+function ensure(){if(!actx)actx=new (window.AudioContext||window.webkitAudioContext)();}
+document.addEventListener("click",ensure);document.addEventListener("keydown",ensure);
+function beep(f,ms){if(mute||!actx)return;const o=actx.createOscillator(),g=actx.createGain();o.frequency.value=f;g.gain.value=0.3;
+  o.connect(g);g.connect(actx.destination);o.start();o.stop(actx.currentTime+ms/1000);}
+let last={state:"idle",count:0,cue_seq:0};
+async function poll(){try{const s=await (await fetch("/status")).json();
+  if(s.state==="countdown"&&s.count!==last.count&&s.count>=1&&s.count<=3)beep(700,70);
+  if(s.state==="recording"&&last.state!=="recording")beep(1400,350);
+  if(s.cue_seq!==last.cue_seq)beep(s.cue==="good"?500:300,s.cue==="good"?150:500);
+  last=s;}catch(e){}setTimeout(poll,100);}
+poll();
+</script>"""
+
+
+class WebUI:
+    """Serves the recorder screen as an MJPEG stream plus a page with buttons, and takes keypresses back.
+
+    Lets the recorder run on a robot with no display: open http://<robot-ip>:<port> on your laptop.
+    The browser plays the countdown beeps, driven by /status, so they come out of the laptop.
+    """
+
+    def __init__(self, port):
+        self.cond = threading.Condition()
+        self.jpg, self.seq = None, 0
+        self.keys = []
+        self.status = {"state": "idle", "count": 0, "cue": "", "cue_seq": 0}
+        ui = self
+
+        class Handler(BaseHTTPRequestHandler):
+            def log_message(self, *a):
+                pass
+
+            def reply(self, body, ctype):
+                self.send_response(200)
+                self.send_header("Content-Type", ctype)
+                self.send_header("Content-Length", str(len(body)))
+                self.send_header("Cache-Control", "no-store")
+                self.end_headers()
+                self.wfile.write(body)
+
+            def do_GET(self):
+                path = urlparse(self.path).path
+                if path == "/status":
+                    self.reply(json.dumps(ui.status).encode(), "application/json")
+                elif path == "/stream.mjpg":
+                    self.send_response(200)
+                    self.send_header("Content-Type", "multipart/x-mixed-replace; boundary=frame")
+                    self.end_headers()
+                    seen = 0
+                    try:
+                        while True:
+                            with ui.cond:
+                                ui.cond.wait_for(lambda: ui.seq != seen, timeout=5)
+                                jpg, seen = ui.jpg, ui.seq
+                            if jpg:
+                                self.wfile.write(b"--frame\r\nContent-Type: image/jpeg\r\nContent-Length: %d\r\n\r\n" % len(jpg)
+                                                 + jpg + b"\r\n")
+                    except (BrokenPipeError, ConnectionError, OSError):
+                        pass
+                else:
+                    self.reply(WEB_PAGE.encode(), "text/html; charset=utf-8")
+
+            def do_POST(self):
+                if urlparse(self.path).path == "/key":
+                    k = parse_qs(urlparse(self.path).query).get("k", [""])[0]
+                    if len(k) == 1:
+                        ui.keys.append(ord(k.lower()))
+                self.reply(b"ok", "text/plain")
+
+        server = ThreadingHTTPServer(("0.0.0.0", port), Handler)
+        server.daemon_threads = True
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+
+    def show(self, canvas):
+        ok, jpg = cv2.imencode(".jpg", canvas, [cv2.IMWRITE_JPEG_QUALITY, 80])
+        if ok:
+            with self.cond:
+                self.jpg, self.seq = jpg.tobytes(), self.seq + 1
+                self.cond.notify_all()
+
+    def key(self):
+        time.sleep(0.001)
+        return self.keys.pop(0) if self.keys else 255
+
+    def cue(self, name):
+        self.status.update(cue=name, cue_seq=self.status["cue_seq"] + 1)
+
+
+WEB = None   # set to a WebUI by `record --web`; then the screen and keys go through the browser instead of a window
+
+
+def getkey():
+    return WEB.key() if WEB else cv2.waitKey(1) & 0xFF
+
+
 # ---- Drawing ----
 
 def put_text(img, text, org, scale, thickness=2):
@@ -717,7 +835,10 @@ def draw(frame, pose, hands, mirror, banner, big, color, det, info, progress, no
             cv2.putText(canvas, what, (560, y), cv2.FONT_HERSHEY_SIMPLEX, 0.9, (230, 230, 230), 2, cv2.LINE_AA)
     if recording:
         cv2.rectangle(canvas, (0, 0), (CANVAS_W - 1, canvas.shape[0] - 1), (0, 0, 255), 14)
-    cv2.imshow(WIN, canvas)
+    if WEB:
+        WEB.show(canvas)
+    else:
+        cv2.imshow(WIN, canvas)
 
 
 KEYS_HELP = [("SPACE", "start the step"), ("- / +", "shorter / longer clips (or click Clip lengths)"), ("R", "redo the last clip"), ("N", "skip this step"), ("B", "back one step"),
@@ -765,13 +886,18 @@ def record(args):
     state, until = "idle", 0.0        # idle -> countdown -> recording -> countdown ... -> idle
     rows, frames, t0 = [], [], 0.0
     fps, last = 0.0, time.monotonic()
-    cv2.namedWindow(WIN, cv2.WINDOW_NORMAL)
-    fit_window(WIN, CANVAS_W, BANNER_H + VIDEO_H + FOOTER_H)
-    cv2.setMouseCallback(WIN, lambda event, x, y, flags, param: clicks.append((x, y)) if event == cv2.EVENT_LBUTTONDOWN else None)
+    global WEB
+    if args.web:
+        WEB = WebUI(args.port)
+        print(f"Open http://<this machine's IP>:{args.port} in a browser to run the session.")
+    else:
+        cv2.namedWindow(WIN, cv2.WINDOW_NORMAL)
+        fit_window(WIN, CANVAS_W, BANNER_H + VIDEO_H + FOOTER_H)
+        cv2.setMouseCallback(WIN, lambda event, x, y, flags, param: clicks.append((x, y)) if event == cv2.EVENT_LBUTTONDOWN else None)
 
     for frame, depth, depth_age in source:
         if paused:   # keep reading the camera so it doesn't buffer, but do nothing else
-            key = cv2.waitKey(1) & 0xFF
+            key = getkey()
             paused = key != ord("p")
             if key == ord("q"):
                 break
@@ -806,6 +932,8 @@ def record(args):
                     note += "  <- POOR, press r to redo"
                 if sound:
                     sounds.play("good" if ok else "poor")
+                if WEB:
+                    WEB.cue("good" if ok else "poor")
                 clip_no += 1
                 if clip_no < len(variants):
                     state, until = "countdown", now + args.rest
@@ -815,6 +943,8 @@ def record(args):
                         break
                     stepno, distance, facing, label, variants = steps[step]
 
+        if WEB:
+            WEB.status.update(state=state, count=math.ceil(until - now) if state == "countdown" else 0)
         sides = assign_hands(pose, hands, w, h)
         det = (bool(pose.pose_landmarks), "l" in sides, "r" in sides)
         info = f"{session.count} clips saved   |   {fps:.0f} fps"
@@ -859,7 +989,7 @@ def record(args):
                         if inside(rect, x, y):
                             lengths[style] = min(10.0, max(1.0, lengths[style] + delta))
 
-        key = cv2.waitKey(1) & 0xFF
+        key = getkey()
         if key == ord("q"):
             break
         if key == ord(" ") and state == "idle":
@@ -888,13 +1018,14 @@ def record(args):
         elif key == ord("r") and session.history:
             step, clip_no = session.undo()
             state = "idle"
-        elif key == ord("f"):
+        elif key == ord("f") and not WEB:
             full = cv2.getWindowProperty(WIN, cv2.WND_PROP_FULLSCREEN) == cv2.WINDOW_FULLSCREEN
             cv2.setWindowProperty(WIN, cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_NORMAL if full else cv2.WINDOW_FULLSCREEN)
 
     sounds.close()
     session.close()
-    cv2.destroyAllWindows()
+    if not WEB:
+        cv2.destroyAllWindows()
     if session.count:
         print(f"Saved {session.count} clips: {session.csv_path} and {session.clip_dir}/")
     else:
@@ -1011,6 +1142,8 @@ def main():
     rec.add_argument("--size", help="webcam resolution to request, e.g. 1280x720")
     rec.add_argument("--ros-topic", help="read the K1 head camera from this ROS2 image topic instead")
     rec.add_argument("--depth-topic", help="also record each landmark's depth (metres) from this ROS2 depth image topic (16UC1 or 32FC1); needs --ros-topic")
+    rec.add_argument("--web", action="store_true", help="no window: serve the session to a browser instead (for a robot you SSH into)")
+    rec.add_argument("--port", type=int, default=8080, help="port for --web (default 8080)")
     rec.add_argument("--start", type=int, default=1, help="step to start at, to resume a session")
 
     sub.add_parser("cameras", help="list webcams that work")
