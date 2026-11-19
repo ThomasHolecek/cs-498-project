@@ -4,32 +4,51 @@ head_track.py  -  Booster K1 head tracking pipeline
 Loop:  frame  ->  MediaPipe Pose (all people)  ->  pick the locked person
        ->  YOUR controller turns pixel error into head yaw/pitch  ->  send to head
 
+The same file runs in three places. Pick with --source and --head.
 
-Run against a laptop webcam, printing head commands:
+1. Laptop, webcam, no robot (development):
     python head_track.py --source webcam --head print
 
-Run against the robot camera, driving the real head (tomorrow, from a Mac):
-    on robot:   python3 k1_camera_stream.py --topic <color topic>
-    on laptop:  python head_track.py --source url --url http://<robot-ip>:8080/stream.mjpg --head booster --iface en0
+2. ON THE ROBOT, headless (the main path; nobody on the team has Linux so the Booster
+   SDK only exists on the robot). It subscribes to the ROS2 camera topic, runs MediaPipe
+   and the controller locally, and calls the SDK in-process. You watch and control it
+   from a laptop browser:
+    robot:   source /opt/ros/humble/setup.bash
+             python3 head_track.py --source ros2 --topic <color topic> --head booster --iface eth0 --no-window
+    laptop:  open http://<robot-ip>:8082        (live overlay + Lock / Release / Center buttons)
+             or curl http://<robot-ip>:8082/lock
 
-Linux laptop with ROS2 can also subscribe directly:
-    python head_track.py --source ros2 --topic /the/color/image/topic --head booster --iface eth0
+3. Laptop brain, robot only does the SDK call (fallback if MediaPipe won't install on the robot):
+    robot:   python3 k1_camera_stream.py --topic <color topic>
+             python3 k1_head_server.py --iface eth0
+    laptop:  python head_track.py --source url --url http://<robot-ip>:8080/stream.mjpg \
+                                  --head http --head-url http://<robot-ip>:8081
 
-Keys while the window is focused:
+Keys while the video window is focused (when not --no-window):
     l   lock onto the person nearest the frame center   (stand-in for "gesture fired")
     r   release the lock
     c   send the head back to center
     q   quit
+
+HTTP control (always on unless --no-control):  /lock  /release  /center  /status  /stream.mjpg  /
 """
 
 import argparse
 import math
+import os
+import sys
 import threading
 import time
 from dataclasses import dataclass, field
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from urllib.parse import urlparse
+from urllib.request import urlopen
 
 import cv2
 import numpy as np
+
+# k1_camera_stream.py lives one folder up (repo root). We reuse its image conversion.
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
 
 # ============================================================================
 # Config. Verify every number marked VERIFY at the robot tomorrow.
@@ -124,50 +143,81 @@ class UrlSource:
 
 class Ros2ImageSource:
     """
-    Subscribes to a ROS2 sensor_msgs/Image topic and always hands back the latest frame.
-    Spins rclpy in a background thread so the main loop never blocks on ROS.
+    Subscribes to a ROS2 camera topic and always hands back the latest frame.
+    This is the source to use ON the robot. Spins rclpy in a background thread so the
+    main loop never blocks on ROS.
+
+    Handles sensor_msgs/Image (any encoding k1_camera_stream.image_to_bgr knows, which
+    includes the odd ones like nv12 and yuyv) and sensor_msgs/CompressedImage (JPEG).
+    Uses the sensor-data QoS profile; most camera drivers publish best-effort and a
+    default reliable subscriber silently receives nothing.
     """
-    def __init__(self, topic):
+    def __init__(self, topic, downscale_width=640):
         import rclpy
         from rclpy.node import Node
-        from sensor_msgs.msg import Image
+        from rclpy.qos import qos_profile_sensor_data
+        from sensor_msgs.msg import CompressedImage, Image
+
+        try:
+            from k1_camera_stream import image_to_bgr
+            self._to_bgr = image_to_bgr
+        except ImportError:
+            print("[ros2] k1_camera_stream.py not found next to this folder, using basic conversion")
+            self._to_bgr = self._basic_to_bgr
 
         self._rclpy = rclpy
         rclpy.init()
-        self._node = Node("k1_head_track_cam")
+        self._node = Node("k1_head_track")
         self._lock = threading.Lock()
         self._frame = None
+        self._downscale = downscale_width
+        self._warned = False
 
-        try:
-            from cv_bridge import CvBridge
-            self._bridge = CvBridge()
-        except ImportError:
-            self._bridge = None   # fall back to manual conversion below
+        # Work out whether the topic is raw or compressed from what ROS says it publishes.
+        types = dict(self._node.get_topic_names_and_types())
+        tnames = types.get(topic, [])
+        compressed = any(t.endswith("CompressedImage") for t in tnames)
+        if not tnames:
+            print(f"[ros2] WARNING: {topic} not visible yet. Is the camera driver running? "
+                  f"Try: python3 ../k1_camera_stream.py --list")
+        msg_type = CompressedImage if compressed else Image
+        self._compressed = compressed
 
-        self._node.create_subscription(Image, topic, self._on_image, 1)
+        self._node.create_subscription(msg_type, topic, self._on_image, qos_profile_sensor_data)
         self._thread = threading.Thread(target=rclpy.spin, args=(self._node,), daemon=True)
         self._thread.start()
-        print(f"[ros2] subscribed to {topic}, waiting for first frame...")
+        print(f"[ros2] subscribed to {topic} ({'compressed' if compressed else 'raw'}), waiting for first frame...")
+
+    @staticmethod
+    def _basic_to_bgr(msg):
+        buf = np.frombuffer(msg.data, dtype=np.uint8)
+        enc = msg.encoding.lower()
+        if enc in ("bgr8", "rgb8"):
+            img = buf.reshape(msg.height, msg.step)[:, :msg.width * 3].reshape(msg.height, msg.width, 3)
+            return img if enc == "bgr8" else cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
+        if enc in ("bgra8", "rgba8"):
+            img = buf.reshape(msg.height, msg.step)[:, :msg.width * 4].reshape(msg.height, msg.width, 4)
+            return cv2.cvtColor(img, cv2.COLOR_BGRA2BGR if enc == "bgra8" else cv2.COLOR_RGBA2BGR)
+        raise ValueError(f"unsupported image encoding: {msg.encoding}")
 
     def _on_image(self, msg):
-        if self._bridge is not None:
-            frame = self._bridge.imgmsg_to_cv2(msg, desired_encoding="bgr8")
-        else:
-            # Manual conversion for the common encodings. Extend if the K1 publishes something else.
-            buf = np.frombuffer(msg.data, dtype=np.uint8)
-            if msg.encoding in ("bgr8", "rgb8"):
-                frame = buf.reshape(msg.height, msg.width, 3)
-                if msg.encoding == "rgb8":
-                    frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
-            elif msg.encoding in ("bgra8", "rgba8"):
-                frame = buf.reshape(msg.height, msg.width, 4)
-                code = cv2.COLOR_BGRA2BGR if msg.encoding == "bgra8" else cv2.COLOR_RGBA2BGR
-                frame = cv2.cvtColor(frame, code)
+        try:
+            if self._compressed:
+                frame = cv2.imdecode(np.frombuffer(msg.data, np.uint8), cv2.IMREAD_COLOR)
             else:
-                print(f"[ros2] unsupported encoding {msg.encoding}, install cv_bridge")
-                return
+                frame = self._to_bgr(msg)
+        except Exception as e:                   # noqa: BLE001  a bad frame is dropped, never fatal
+            if not self._warned:
+                print(f"[ros2] could not convert frame: {e}")
+                self._warned = True
+            return
+        if frame is None:
+            return
+        if self._downscale and frame.shape[1] > self._downscale:
+            h = int(frame.shape[0] * self._downscale / frame.shape[1])
+            frame = cv2.resize(frame, (self._downscale, h))
         with self._lock:
-            self._frame = frame.copy()
+            self._frame = np.ascontiguousarray(frame)
 
     def read(self):
         with self._lock:
@@ -176,8 +226,11 @@ class Ros2ImageSource:
             return True, self._frame.copy()
 
     def release(self):
-        self._node.destroy_node()
-        self._rclpy.shutdown()
+        try:
+            self._node.destroy_node()
+            self._rclpy.shutdown()
+        except Exception:                        # noqa: BLE001
+            pass
 
 
 # ============================================================================
@@ -338,6 +391,135 @@ class BoosterHead:
             print(f"[booster] RotateHead returned {rc}")
 
 
+class HttpHead:
+    """
+    Fallback path: send angles to k1_head_server.py running on the robot, which makes
+    the SDK call there. Lets a Mac/Windows laptop drive the head without the SDK.
+    """
+    def __init__(self, base_url):
+        self._base = base_url.rstrip("/")
+        self._throttle = _Throttle()
+        with urlopen(f"{self._base}/", timeout=2) as r:
+            print(f"[http-head] {r.read().decode().strip()}")
+
+    def send(self, pitch_rad, yaw_rad):
+        pitch_rad, yaw_rad = clamp_head(pitch_rad, yaw_rad)
+        if not self._throttle.should_send(pitch_rad, yaw_rad):
+            return
+        with urlopen(f"{self._base}/head?pitch={pitch_rad:.4f}&yaw={yaw_rad:.4f}", timeout=0.5) as r:
+            body = r.read().decode().strip()
+            if body not in ("rc=0", "rc=None"):
+                print(f"[http-head] {body}")
+
+
+# ============================================================================
+# Remote control + live view over HTTP. This is how you watch and drive the
+# tracker when it runs headless on the robot. Open http://<robot-ip>:8082 in a
+# browser: live overlay video with Lock / Release / Center buttons.
+# ============================================================================
+
+_VIEW_HTML = b"""<!doctype html><html><head><meta name=viewport content="width=device-width">
+<title>K1 head track</title>
+<style>body{margin:0;background:#111;color:#ddd;font:14px system-ui}
+.bar{padding:8px;display:flex;gap:8px;align-items:center}
+button{font:16px system-ui;padding:8px 16px}
+img{display:block;width:100%;max-width:960px}
+#s{margin-left:auto;font-family:monospace}</style></head><body>
+<div class=bar>
+<button onclick="go('lock')">Lock (l)</button>
+<button onclick="go('release')">Release (r)</button>
+<button onclick="go('center')">Center (c)</button>
+<span id=s></span></div>
+<img src="/stream.mjpg">
+<script>
+function go(c){fetch('/'+c).then(r=>r.text()).then(t=>document.getElementById('s').textContent=t)}
+document.addEventListener('keydown',e=>{if(e.key=='l')go('lock');if(e.key=='r')go('release');if(e.key=='c')go('center')})
+setInterval(()=>fetch('/status').then(r=>r.text()).then(t=>document.getElementById('s').textContent=t),1000)
+</script></body></html>"""
+
+
+class RemoteControl:
+    """
+    Tiny HTTP server. Commands are queued and consumed by the main loop (so all robot
+    calls stay on one thread); the main loop pushes overlay JPEGs in for /stream.mjpg.
+    """
+    def __init__(self, port=8082, jpeg_quality=70):
+        self._cmds = []
+        self._cmd_lock = threading.Lock()
+        self._cond = threading.Condition()
+        self._jpg, self._seq = None, 0
+        self._status = "starting"
+        self._quality = jpeg_quality
+        rc = self
+
+        class Handler(BaseHTTPRequestHandler):
+            def _text(self, code, body):
+                data = body.encode()
+                self.send_response(code)
+                self.send_header("Content-Type", "text/plain")
+                self.send_header("Content-Length", str(len(data)))
+                self.end_headers()
+                self.wfile.write(data)
+
+            def do_GET(self):
+                path = urlparse(self.path).path
+                if path == "/":
+                    self.send_response(200)
+                    self.send_header("Content-Type", "text/html")
+                    self.send_header("Content-Length", str(len(_VIEW_HTML)))
+                    self.end_headers()
+                    self.wfile.write(_VIEW_HTML)
+                elif path in ("/lock", "/release", "/center", "/quit"):
+                    with rc._cmd_lock:
+                        rc._cmds.append(path[1:])
+                    self._text(200, f"{path[1:]} queued\n")
+                elif path == "/status":
+                    self._text(200, rc._status + "\n")
+                elif path == "/stream.mjpg":
+                    self.send_response(200)
+                    self.send_header("Content-Type", "multipart/x-mixed-replace; boundary=frame")
+                    self.send_header("Cache-Control", "no-cache")
+                    self.end_headers()
+                    seq = -1
+                    try:
+                        while True:
+                            with rc._cond:
+                                rc._cond.wait_for(lambda: rc._seq != seq, timeout=5)
+                                jpg, seq = rc._jpg, rc._seq
+                            if jpg is None:
+                                continue
+                            self.wfile.write(b"--frame\r\nContent-Type: image/jpeg\r\n"
+                                             + f"Content-Length: {len(jpg)}\r\n\r\n".encode() + jpg + b"\r\n")
+                    except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
+                        pass
+                else:
+                    self._text(404, "not found\n")
+
+            def log_message(self, *a):
+                pass
+
+        self._server = ThreadingHTTPServer(("0.0.0.0", port), Handler)
+        self._server.daemon_threads = True
+        threading.Thread(target=self._server.serve_forever, daemon=True).start()
+        print(f"[control] open http://<this-machine-ip>:{port}  in a browser")
+
+    def pop_commands(self):
+        with self._cmd_lock:
+            cmds, self._cmds = self._cmds, []
+        return cmds
+
+    def publish_frame(self, frame_bgr, status):
+        self._status = status
+        ok, jpg = cv2.imencode(".jpg", frame_bgr, [cv2.IMWRITE_JPEG_QUALITY, self._quality])
+        if ok:
+            with self._cond:
+                self._jpg, self._seq = jpg.tobytes(), self._seq + 1
+                self._cond.notify_all()
+
+    def close(self):
+        self._server.shutdown()
+
+
 # ============================================================================
 # ======================  YOUR PART STARTS HERE  =============================
 # ============================================================================
@@ -475,11 +657,18 @@ def main():
     ap.add_argument("--cam", type=int, default=0, help="webcam index")
     ap.add_argument("--url", default="http://192.168.10.102:8080/stream.mjpg",
                     help="MJPEG stream URL from k1_camera_stream.py on the robot")
-    ap.add_argument("--topic", default="/camera/color/image_raw", help="ROS2 image topic (Linux + ROS2 only)")
-    ap.add_argument("--head", choices=["print", "booster"], default="print")
-    ap.add_argument("--iface", default="eth0", help="network interface the robot is on")
+    ap.add_argument("--topic", default="/camera/color/image_raw",
+                    help="ROS2 image topic (on the robot; list them with k1_camera_stream.py --list)")
+    ap.add_argument("--head", choices=["print", "booster", "http"], default="print")
+    ap.add_argument("--iface", default="eth0", help="network interface for the Booster SDK (--head booster)")
+    ap.add_argument("--head-url", default="http://192.168.10.102:8081",
+                    help="k1_head_server.py address (--head http)")
     ap.add_argument("--model", default=DEFAULT_MODEL)
-    ap.add_argument("--no-window", action="store_true")
+    ap.add_argument("--no-window", action="store_true", help="headless; use the browser page instead")
+    ap.add_argument("--no-control", action="store_true", help="disable the HTTP control/view server")
+    ap.add_argument("--control-port", type=int, default=8082)
+    ap.add_argument("--auto-lock", type=float, default=0.0,
+                    help="seconds after start to lock onto whoever is nearest center (0 = off). Handy for solo tests.")
     args = ap.parse_args()
 
     if args.source == "webcam":
@@ -488,10 +677,38 @@ def main():
         source = UrlSource(args.url)
     else:
         source = Ros2ImageSource(args.topic)
-    head = PrintHead() if args.head == "print" else BoosterHead(args.iface)
+
+    if args.head == "print":
+        head = PrintHead()
+    elif args.head == "booster":
+        head = BoosterHead(args.iface)
+    else:
+        head = HttpHead(args.head_url)
+
     detector = PoseDetector(args.model)
     tracker = HeadTracker()
+    control = None if args.no_control else RemoteControl(args.control_port)
+    if args.no_window and control is None:
+        print("[warn] --no-window with --no-control: no way to lock. Use --auto-lock or drop --no-control.")
 
+    def do(cmd, people):
+        """One place for every command, whether it came from a key or from HTTP."""
+        if cmd == "lock":
+            p = nearest_to_center(people)
+            if p is not None:
+                tracker.lock_on(p)
+                print("[lock] locked on")
+            else:
+                print("[lock] nobody in frame to lock onto")
+        elif cmd == "release":
+            tracker.release()
+            print("[lock] released")
+        elif cmd == "center":
+            head.send(*tracker.center())
+        return cmd == "quit"
+
+    t_start = time.monotonic()
+    auto_locked = False
     last_t = time.monotonic()
     fps = 0.0
     try:
@@ -502,6 +719,16 @@ def main():
                 continue
 
             people = detector.detect(frame)
+
+            # Commands from HTTP (browser buttons / curl), then auto-lock, then keyboard below.
+            quit_now = False
+            if control is not None:
+                for cmd in control.pop_commands():
+                    quit_now |= do(cmd, people)
+            if args.auto_lock and not auto_locked and time.monotonic() - t_start >= args.auto_lock:
+                auto_locked = True
+                do("lock", people)
+
             target = tracker.choose_target(people) if tracker.locked else None
             pitch, yaw = tracker.update(target)
             try:
@@ -513,25 +740,31 @@ def main():
             fps = 0.9 * fps + 0.1 * (1.0 / max(1e-6, now - last_t))
             last_t = now
 
+            draw_overlay(frame, people, target, tracker, fps)
+            if control is not None:
+                lock_txt = "LOCKED" if tracker.locked else "no lock"
+                if tracker.locked and target is None:
+                    lock_txt = "LOCKED (lost)"
+                control.publish_frame(frame, f"{lock_txt}  yaw {math.degrees(tracker.yaw):+.1f}  "
+                                             f"pitch {math.degrees(tracker.pitch):+.1f}  {fps:.0f} fps  "
+                                             f"{len(people)} people")
+
             if not args.no_window:
-                draw_overlay(frame, people, target, tracker, fps)
                 cv2.imshow("K1 head track", frame)
                 key = cv2.waitKey(1) & 0xFF
-                if key == ord("q"):
-                    break
-                elif key == ord("l"):
-                    p = nearest_to_center(people)
-                    if p is not None:
-                        tracker.lock_on(p)
-                        print("[lock] locked on")
-                elif key == ord("r"):
-                    tracker.release()
-                    print("[lock] released")
-                elif key == ord("c"):
-                    head.send(*tracker.center())
+                keymap = {ord("l"): "lock", ord("r"): "release", ord("c"): "center", ord("q"): "quit"}
+                if key in keymap:
+                    quit_now |= do(keymap[key], people)
+            if quit_now:
+                break
     finally:
-        head.send(*tracker.center())
+        try:
+            head.send(*tracker.center())
+        except Exception:                        # noqa: BLE001
+            pass
         source.release()
+        if control is not None:
+            control.close()
         cv2.destroyAllWindows()
 
 
